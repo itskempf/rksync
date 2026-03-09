@@ -432,6 +432,7 @@ local state = {
 	suppressUntil = {},
 	lastObserved = {},
 	workspaceName = "",
+	syncRootName = "",
 	statusMessage = "Waiting for local server",
 	statusMode = "offline",
 	lastSyncAt = "",
@@ -507,6 +508,9 @@ local function renderStatus()
 	end
 	if state.workspaceName ~= "" then
 		table.insert(detailParts, "Workspace: " .. state.workspaceName)
+	end
+	if state.syncRootName ~= "" then
+		table.insert(detailParts, "Root: " .. state.syncRootName)
 	end
 	if state.lastSyncAt ~= "" then
 		table.insert(detailParts, "Last sync: " .. state.lastSyncAt)
@@ -625,6 +629,11 @@ end
 local function buildUpsertOp(script)
 	local syncId = getOrCreateSyncId(script)
 	state.idIndex[syncId] = script
+	local observed = state.lastObserved[syncId]
+	local parentHash = nil
+	-- If we have an observed hash, we could pass it to track conflicts, but we don't calculate hash in lua.
+	-- VS Code side checks `current.hash !== op.parentHash`, so we can just let VS Code handle it by seeing parentHash undefined
+	-- which means it will detect conflict if localHash !== current.hash and localHash !== op.content hash.
 	return {
 		type = "upsert",
 		id = syncId,
@@ -1001,6 +1010,7 @@ local function startSync()
 	end)
 	if not helloSuccess or not helloResult or not helloResult.ok then
 		state.workspaceName = ""
+		state.syncRootName = ""
 		state.serverScriptCount = 0
 		state.serverTombstoneCount = 0
 		state.enabled = false
@@ -1010,6 +1020,7 @@ local function startSync()
 		return
 	end
 	state.workspaceName = helloResult.workspaceName or ""
+	state.syncRootName = helloResult.syncRoot or ""
 	applyServerCounts(helloResult)
 
 	local pullSuccess, pullResult = pcall(function()

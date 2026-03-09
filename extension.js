@@ -792,6 +792,7 @@ class MorgSyncController {
     await fs.mkdir(this.syncRootPath, { recursive: true });
     await fs.mkdir(this.stateDirPath, { recursive: true });
     await this.loadState();
+    this.ignoreMatcher = new IgnoreMatcher(this.syncRootPath);
     await this.canonicalizeTrackedPaths();
     await this.reconcileLocalDisk({ emitOps: true, reason: 'extension startup' });
     this.startWatchers();
@@ -1038,7 +1039,8 @@ class MorgSyncController {
   startWatchers() {
     const patterns = [
       new vscode.RelativePattern(this.workspaceFolder, `${this.syncRootName}/**/*.lua`),
-      new vscode.RelativePattern(this.workspaceFolder, `${this.syncRootName}/**/*.luau`)
+      new vscode.RelativePattern(this.workspaceFolder, `${this.syncRootName}/**/*.luau`),
+      new vscode.RelativePattern(this.workspaceFolder, `${this.syncRootName}/.rksyncignore`)
     ];
 
     for (const pattern of patterns) {
@@ -1068,8 +1070,27 @@ class MorgSyncController {
   }
 
   async processLocalFileEvent(absPath, kind) {
+    if (path.basename(absPath) === '.rksyncignore') {
+      if (this.ignoreMatcher) {
+        this.ignoreMatcher.loadPatterns();
+        this.log('Reloaded .rksyncignore patterns.');
+      }
+      return;
+    }
+
     const muted = await this.isMuted(absPath);
     if (muted) {
+      return;
+    }
+
+    let relativePath;
+    try {
+      relativePath = normalizeRelativePath(toPosixPath(path.relative(this.syncRootPath, absPath)));
+    } catch {
+      // Out of bounds or invalid
+    }
+
+    if (relativePath && this.ignoreMatcher && this.ignoreMatcher.isIgnored(relativePath)) {
       return;
     }
 
@@ -1169,11 +1190,32 @@ class MorgSyncController {
     this.state.tombstones = Object.fromEntries(tombstones.map((item) => [item.id, item]));
   }
 
-  takeReusableTombstone(hash, className) {
+  takeReusableTombstone(hash, className, relativePath = null) {
     const cutoff = now() - TOMBSTONE_REUSE_WINDOW_MS;
-    const reusable = Object.values(this.state.tombstones)
-      .filter((entry) => entry.hash === hash && entry.className === className && entry.deletedAt >= cutoff)
-      .sort((left, right) => right.deletedAt - left.deletedAt)[0];
+    let reusable = null;
+
+    // First, try to find a tombstone that matches both hash and exact name,
+    // to improve folder rename tracking.
+    if (relativePath) {
+      const parsedPath = parseRelativeScriptPath(relativePath);
+      reusable = Object.values(this.state.tombstones)
+        .filter((entry) => entry.hash === hash && entry.className === className && entry.deletedAt >= cutoff)
+        .find((entry) => {
+          try {
+            const parsedEntry = parseRelativeScriptPath(entry.relativePath);
+            return parsedEntry.scriptName === parsedPath.scriptName;
+          } catch {
+            return false;
+          }
+        });
+    }
+
+    // Fallback to finding any tombstone with the same hash
+    if (!reusable) {
+      reusable = Object.values(this.state.tombstones)
+        .filter((entry) => entry.hash === hash && entry.className === className && entry.deletedAt >= cutoff)
+        .sort((left, right) => right.deletedAt - left.deletedAt)[0];
+    }
 
     if (!reusable) {
       return null;
@@ -1189,7 +1231,7 @@ class MorgSyncController {
     const content = await fs.readFile(absPath, 'utf8');
     const hash = hashContent(content);
     const existingId = this.pathToId.get(relativePath);
-    const reusableTombstone = existingId ? null : this.takeReusableTombstone(hash, parsed.className);
+    const reusableTombstone = existingId ? null : this.takeReusableTombstone(hash, parsed.className, relativePath);
     const id = existingId ?? reusableTombstone?.id ?? crypto.randomUUID();
     const current = this.state.scripts[id];
 
@@ -1282,6 +1324,16 @@ class MorgSyncController {
       const entries = await fs.readdir(current, { withFileTypes: true });
       for (const entry of entries) {
         const absPath = path.join(current, entry.name);
+        let relativePath = null;
+        try {
+          relativePath = normalizeRelativePath(toPosixPath(path.relative(this.syncRootPath, absPath)));
+        } catch {
+          // invalid
+        }
+        if (relativePath && this.ignoreMatcher && this.ignoreMatcher.isIgnored(relativePath)) {
+          continue;
+        }
+
         if (entry.isDirectory()) {
           queue.push(absPath);
           continue;
@@ -1303,6 +1355,9 @@ class MorgSyncController {
     for (const absPath of files) {
       const relativePath = normalizeRelativePath(toPosixPath(path.relative(this.syncRootPath, absPath)));
       seenPaths.add(relativePath);
+      if (this.ignoreMatcher && this.ignoreMatcher.isIgnored(relativePath)) {
+        continue;
+      }
       const parsed = parseRelativeScriptPath(relativePath);
       const content = await fs.readFile(absPath, 'utf8');
       const hash = hashContent(content);
@@ -1342,7 +1397,7 @@ class MorgSyncController {
         continue;
       }
 
-      const reusableTombstone = this.takeReusableTombstone(hash, parsed.className);
+      const reusableTombstone = this.takeReusableTombstone(hash, parsed.className, relativePath);
       const newId = reusableTombstone?.id ?? crypto.randomUUID();
       const entry = this.makeStateEntry(newId, relativePath, parsed.className, content);
       this.setScriptEntry(entry);
@@ -1516,12 +1571,34 @@ class MorgSyncController {
     const className = op.className || parsed.className;
     const normalized = canonicalizeRelativePath(op.relativePath, className);
     const absPath = this.resolveSyncPath(normalized);
+    const current = this.state.scripts[op.id];
+
+    let isConflict = false;
+    // Check if the file was modified locally but not synced to Studio yet
+    if (current && current.hash !== op.parentHash && fssync.existsSync(absPath)) {
+        const localContent = fssync.readFileSync(absPath, 'utf8');
+        const localHash = hashContent(localContent);
+        if (localHash !== current.hash && localHash !== hashContent(op.content)) {
+            // Both Studio and Local have un-synced different changes
+            isConflict = true;
+        }
+    }
+
     await fs.mkdir(path.dirname(absPath), { recursive: true });
     const contentHash = hashContent(op.content);
+
+    if (isConflict) {
+        this.log(`CONFLICT detected for ${normalized}. Creating .studio variant.`);
+        const conflictAbsPath = absPath + '.studio.luau';
+        this.markMuted(conflictAbsPath, { hash: contentHash });
+        await fs.writeFile(conflictAbsPath, op.content, 'utf8');
+        vscode.window.showWarningMessage(`Conflict on ${normalized}. Studio changes saved to .studio.luau. Resolve manually!`);
+        return;
+    }
+
     this.markMuted(absPath, { hash: contentHash });
     await fs.writeFile(absPath, op.content, 'utf8');
 
-    const current = this.state.scripts[op.id];
     if (current && current.relativePath !== normalized) {
       const oldAbsPath = this.resolveSyncPath(current.relativePath);
       this.markMuted(oldAbsPath, { deleted: true });
