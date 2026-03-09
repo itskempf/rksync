@@ -15,6 +15,7 @@ It is built for fast live-editing without setting up Rojo or a larger build pipe
 - Live sync for `Script`, `LocalScript`, and `ModuleScript`
 - Roblox hierarchy mirrored into a local `roblox-sync/` folder
 - Stable reconnect behavior for offline edits
+- `.rksyncignore` support for local scratch files and generated artifacts
 - Delete tombstones so removed files stay removed after reopen
 - VS Code sidebar with `Status`, `Live Files`, and `Recent Activity`
 - Roblox Studio dock widget with connection state and sync counters
@@ -101,6 +102,18 @@ Suffix rules:
 
 Reload VS Code after changing either setting so the local server restarts with the new config.
 
+## Optional Ignore File
+
+Create `roblox-sync/.rksyncignore` to skip local files or folders that should not sync back into Studio.
+
+Example:
+
+```text
+*.tmp
+build/
+/StarterPlayer/Secrets.client.luau
+```
+
 ## Development
 
 ```powershell
@@ -116,3 +129,4 @@ npm run package
 - Missing intermediate ancestors from local-only paths are created as Roblox `Folder` instances.
 - Legacy `.morg-sync` state is migrated into `.rksync`.
 - Runtime-only roots such as `CoreGui`, `CorePackages`, and live `Players` descendants are ignored.
+- Divergent Studio edits are saved under `.rksync/conflicts/` instead of silently overwriting local unsynced work.

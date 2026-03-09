@@ -2,7 +2,7 @@
   "name": "rksync",
   "displayName": "RKsync",
   "description": "Live sync Roblox Studio scripts with the current VS Code workspace.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -100,6 +100,9 @@
   },
   "scripts": {
     "test": "node --test",
-    "package": "npx @vscode/vsce package"
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.7.1"
   }
 }

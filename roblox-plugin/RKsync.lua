@@ -432,6 +432,7 @@ local state = {
 	suppressUntil = {},
 	lastObserved = {},
 	workspaceName = "",
+	syncRootName = "",
 	statusMessage = "Waiting for local server",
 	statusMode = "offline",
 	lastSyncAt = "",
@@ -507,6 +508,9 @@ local function renderStatus()
 	end
 	if state.workspaceName ~= "" then
 		table.insert(detailParts, "Workspace: " .. state.workspaceName)
+	end
+	if state.syncRootName ~= "" then
+		table.insert(detailParts, "Root: " .. state.syncRootName)
 	end
 	if state.lastSyncAt ~= "" then
 		table.insert(detailParts, "Last sync: " .. state.lastSyncAt)
@@ -1001,6 +1005,7 @@ local function startSync()
 	end)
 	if not helloSuccess or not helloResult or not helloResult.ok then
 		state.workspaceName = ""
+		state.syncRootName = ""
 		state.serverScriptCount = 0
 		state.serverTombstoneCount = 0
 		state.enabled = false
@@ -1010,6 +1015,7 @@ local function startSync()
 		return
 	end
 	state.workspaceName = helloResult.workspaceName or ""
+	state.syncRootName = helloResult.syncRoot or ""
 	applyServerCounts(helloResult)
 
 	local pullSuccess, pullResult = pcall(function()
