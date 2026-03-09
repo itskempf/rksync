@@ -3,7 +3,7 @@
   "displayName": "RKsync",
   "description": "Live sync Roblox Studio scripts with the current VS Code workspace.",
   "version": "0.2.2",
-  "publisher": "local",
+  "publisher": "itskempf",
   "license": "MIT",
   "repository": {
     "type": "git",

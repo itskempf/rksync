@@ -793,7 +793,21 @@ class RKsyncController {
     this.workspaceFolder = folders[0];
     this.workspacePath = this.workspaceFolder.uri.fsPath;
 
-    const { port, syncRoot } = this.getConfiguration();
+    let config = this.getConfiguration();
+    try {
+      const jsonPath = path.join(this.workspacePath, '.rksync.json');
+      if (fssync.existsSync(jsonPath)) {
+        const parsed = JSON.parse(fssync.readFileSync(jsonPath, 'utf8'));
+        if (parsed.port) config.port = parsed.port;
+        if (parsed.syncRoot) config.syncRoot = parsed.syncRoot;
+      }
+    } catch (err) {
+      this.log(`Malformed .rksync.json: ${err.message}`);
+      this.setLastError('Malformed .rksync.json');
+      vscode.window.showWarningMessage(`Malformed .rksync.json: ${err.message}`);
+    }
+    const { port, syncRoot } = config;
+
     this.syncRootName = syncRoot;
     this.syncRootPath = path.join(this.workspacePath, syncRoot);
     this.stateDirPath = path.join(this.workspacePath, STATE_DIR_NAME);
@@ -822,7 +836,9 @@ class RKsyncController {
     }
 
     if (folders.length > 1) {
-      this.log(`Multiple workspace folders detected. Using only the first folder: ${this.workspaceFolder.name}`);
+      const msg = `Multiple workspace folders detected. RKsync uses only the first folder: ${this.workspaceFolder.name}`;
+      this.log(msg);
+      vscode.window.showInformationMessage(msg);
     }
 
     this.refreshVisualState(true);
