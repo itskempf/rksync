@@ -562,6 +562,7 @@ class MorgSyncController {
 
   setLastError(message) {
     this.lastErrorMessage = message;
+    this.log(`Error state set: ${message}`);
     this.refreshVisualState(true);
   }
 
@@ -636,11 +637,26 @@ class MorgSyncController {
     }
   }
 
-  getConfiguration() {
+  async getConfiguration() {
+    let projectConfig = {};
+    const configPath = this.workspaceFolder ? path.join(this.workspacePath, '.rksync.json') : null;
+
+    if (configPath && fssync.existsSync(configPath)) {
+      try {
+        const content = await fs.readFile(configPath, 'utf8');
+        projectConfig = JSON.parse(content);
+      } catch (err) {
+        this.log(`Failed to read or parse .rksync.json: ${err.message}. Falling back to VS Code settings.`);
+        vscode.window.showWarningMessage(`Malformed .rksync.json: ${err.message}. Using VS Code settings.`);
+      }
+    }
+
     const config = vscode.workspace.getConfiguration('rksync');
     const legacyConfig = vscode.workspace.getConfiguration('morgSync');
-    const configuredPort = pickConfiguredValue(config, legacyConfig, 'port', DEFAULT_PORT);
-    const configuredRoot = pickConfiguredValue(config, legacyConfig, 'syncRoot', DEFAULT_SYNC_ROOT);
+
+    let configuredPort = projectConfig.port ?? pickConfiguredValue(config, legacyConfig, 'port', DEFAULT_PORT);
+    let configuredRoot = projectConfig.syncRoot ?? pickConfiguredValue(config, legacyConfig, 'syncRoot', DEFAULT_SYNC_ROOT);
+
     return {
       port: Number.isInteger(configuredPort) ? configuredPort : DEFAULT_PORT,
       syncRoot: typeof configuredRoot === 'string' && configuredRoot.trim() ? configuredRoot.trim() : DEFAULT_SYNC_ROOT
@@ -781,7 +797,7 @@ class MorgSyncController {
     this.workspaceFolder = folders[0];
     this.workspacePath = this.workspaceFolder.uri.fsPath;
 
-    const { port, syncRoot } = this.getConfiguration();
+    const { port, syncRoot } = await this.getConfiguration();
     this.syncRootName = syncRoot;
     this.syncRootPath = path.join(this.workspacePath, syncRoot);
     this.stateDirPath = path.join(this.workspacePath, STATE_DIR_NAME);
@@ -810,7 +826,9 @@ class MorgSyncController {
     }
 
     if (folders.length > 1) {
-      this.log(`Multiple workspace folders detected. Using only the first folder: ${this.workspaceFolder.name}`);
+      const msg = `RKsync currently supports a single workspace folder. Tracking: ${this.workspaceFolder.name}`;
+      this.log(msg);
+      vscode.window.showInformationMessage(msg);
     }
 
     this.refreshVisualState(true);

@@ -3,7 +3,7 @@
   "displayName": "RKsync",
   "description": "Live sync Roblox Studio scripts with the current VS Code workspace.",
   "version": "0.2.0",
-  "publisher": "local",
+  "publisher": "itskempf",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -101,6 +101,7 @@
   "scripts": {
     "test": "node --test",
     "test:lua": "lua5.3 test/lua/run_tests.lua",
-    "package": "npx @vscode/vsce package"
+    "package": "npx @vscode/vsce package",
+    "install-plugin": "powershell -ExecutionPolicy Bypass -File .\\scripts\\install-plugin.ps1"
   }
 }

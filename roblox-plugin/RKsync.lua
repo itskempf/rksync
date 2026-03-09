@@ -291,7 +291,7 @@ rowLayout.Padding = UDim.new(0, 8)
 rowLayout.Parent = buttonRow
 
 local toggleButton = Instance.new("TextButton")
-toggleButton.Size = UDim2.new(0.5, -4, 1, 0)
+toggleButton.Size = UDim2.new(0.33, -4, 1, 0)
 toggleButton.BackgroundColor3 = Color3.fromRGB(62, 100, 190)
 toggleButton.BorderSizePixel = 0
 toggleButton.TextColor3 = Color3.new(1, 1, 1)
@@ -301,7 +301,7 @@ toggleButton.Text = "Start Sync"
 toggleButton.Parent = buttonRow
 
 local snapshotButton = Instance.new("TextButton")
-snapshotButton.Size = UDim2.new(0.5, -4, 1, 0)
+snapshotButton.Size = UDim2.new(0.33, -4, 1, 0)
 snapshotButton.BackgroundColor3 = Color3.fromRGB(70, 70, 84)
 snapshotButton.BorderSizePixel = 0
 snapshotButton.TextColor3 = Color3.new(1, 1, 1)
@@ -309,6 +309,16 @@ snapshotButton.TextSize = 15
 snapshotButton.Font = Enum.Font.SourceSansSemibold
 snapshotButton.Text = "Push Snapshot"
 snapshotButton.Parent = buttonRow
+
+local testConnectionButton = Instance.new("TextButton")
+testConnectionButton.Size = UDim2.new(0.33, -4, 1, 0)
+testConnectionButton.BackgroundColor3 = Color3.fromRGB(70, 70, 84)
+testConnectionButton.BorderSizePixel = 0
+testConnectionButton.TextColor3 = Color3.new(1, 1, 1)
+testConnectionButton.TextSize = 14
+testConnectionButton.Font = Enum.Font.SourceSansSemibold
+testConnectionButton.Text = "Test Connect"
+testConnectionButton.Parent = buttonRow
 
 local pullButton = Instance.new("TextButton")
 pullButton.Size = UDim2.new(1, 0, 0, 32)
@@ -998,7 +1008,7 @@ local function startSync()
 	end
 
 	if isPlaySessionRunning() then
-		logStatus("paused", "Play test running. RKsync will reconnect when the session stops.")
+		logStatus("paused", "Sync paused during play test. Will reconnect when stopped.")
 		pullLoop(state.stopToken)
 		flushLoop(state.stopToken)
 		snapshotLoop(state.stopToken)
@@ -1016,7 +1026,12 @@ local function startSync()
 		state.enabled = false
 		plugin:SetSetting("enabled", false)
 		ui.toggleButton.Text = "Start Sync"
-		logStatus("offline", "Connection failed: " .. tostring(helloResult))
+		local errorMsg = tostring(helloResult)
+		if string.find(errorMsg, "Http requests are not enabled") then
+			logStatus("offline", "Enable 'Allow HTTP Requests' in Game Settings > Security.")
+		else
+			logStatus("offline", "Connection failed. Is VS Code server running?")
+		end
 		return
 	end
 	state.workspaceName = helloResult.workspaceName or ""
@@ -1048,6 +1063,38 @@ local function stopSync()
 	ui.toggleButton.Text = "Start Sync"
 	logStatus("offline", "Sync stopped")
 end
+
+local function testConnection()
+	local normalizedUrl = string.gsub(string.gsub(urlBox.Text, "%s+$", ""), "^%s+", "")
+	if normalizedUrl == "" then
+		normalizedUrl = DEFAULT_SERVER_URL
+	end
+	state.serverUrl = normalizedUrl
+	plugin:SetSetting("serverUrl", state.serverUrl)
+	logStatus("idle", "Testing connection to " .. state.serverUrl .. "...")
+
+	local success, result = pcall(function()
+		return request("GET", "/hello")
+	end)
+
+	if not success or not result or not result.ok then
+		local errorMsg = tostring(result)
+		if string.find(errorMsg, "Http requests are not enabled") then
+			logStatus("offline", "Enable 'Allow HTTP Requests' in Game Settings > Security.")
+		else
+			logStatus("offline", "Connection failed. Check VS Code server or URL.")
+		end
+		return
+	end
+
+	local workspaceName = result.workspaceName or "Unknown"
+	local syncRootName = result.syncRoot or "Unknown"
+	local scripts = result.counts and result.counts.scripts or 0
+
+	logStatus("online", string.format("Connected | Workspace: %s | Root: %s | Scripts: %d", workspaceName, syncRootName, scripts))
+end
+
+ui.testConnectionButton.MouseButton1Click:Connect(testConnection)
 
 ui.toggleButton.MouseButton1Click:Connect(function()
 	if state.enabled then
