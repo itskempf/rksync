@@ -2,7 +2,7 @@
   "name": "rksync",
   "displayName": "RKsync",
   "description": "Local-first live sync between VS Code and Roblox Studio scripts.",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "publisher": "itskempf",
   "license": "MIT",
   "repository": {
