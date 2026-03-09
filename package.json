@@ -1,0 +1,97 @@
+{
+  "name": "rksync",
+  "displayName": "RKsync",
+  "description": "Live sync Roblox Studio scripts with the current VS Code workspace.",
+  "version": "0.2.0",
+  "publisher": "local",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "roblox",
+    "luau",
+    "sync",
+    "studio"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:rksync.status",
+    "onView:rksync.files",
+    "onView:rksync.activity",
+    "onCommand:rksync.showStatus",
+    "onCommand:rksync.openSyncFolder",
+    "onCommand:rksync.rebuildState",
+    "onCommand:rksync.showOutput"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "rksync",
+          "title": "RKsync",
+          "icon": "media/rksync.svg"
+        }
+      ]
+    },
+    "views": {
+      "rksync": [
+        {
+          "id": "rksync.status",
+          "name": "Status"
+        },
+        {
+          "id": "rksync.files",
+          "name": "Live Files"
+        },
+        {
+          "id": "rksync.activity",
+          "name": "Recent Activity"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "rksync.showStatus",
+        "title": "RKsync: Show Status"
+      },
+      {
+        "command": "rksync.openSyncFolder",
+        "title": "RKsync: Open Sync Folder"
+      },
+      {
+        "command": "rksync.rebuildState",
+        "title": "RKsync: Rebuild Sync State"
+      },
+      {
+        "command": "rksync.showOutput",
+        "title": "RKsync: Show Output"
+      }
+    ],
+    "configuration": {
+      "title": "RKsync",
+      "properties": {
+        "rksync.port": {
+          "type": "number",
+          "default": 34872,
+          "minimum": 1024,
+          "maximum": 65535,
+          "description": "Local HTTP port used by the RKsync server."
+        },
+        "rksync.syncRoot": {
+          "type": "string",
+          "default": "roblox-sync",
+          "description": "Folder inside the workspace where Roblox scripts are mirrored."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "test": "node --test",
+    "package": "npx @vscode/vsce package"
+  }
+}

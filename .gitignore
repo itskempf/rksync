@@ -1,0 +1,6 @@
+node_modules/
+*.vsix
+.morg-sync/
+.rksync/
+_rksync-runtime-trash/
+roblox-sync/

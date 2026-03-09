@@ -1,0 +1,6 @@
+.gitignore
+.rksync/**
+.morg-sync/**
+_rksync-runtime-trash/**
+roblox-sync/**
+test/**
