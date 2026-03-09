@@ -4,7 +4,15 @@
   "description": "Live sync Roblox Studio scripts with the current VS Code workspace.",
   "version": "0.2.0",
   "publisher": "local",
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/itskempf/rksync.git"
+  },
+  "homepage": "https://github.com/itskempf/rksync#readme",
+  "bugs": {
+    "url": "https://github.com/itskempf/rksync/issues"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },

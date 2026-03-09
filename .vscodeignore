@@ -1,4 +1,5 @@
 .gitignore
+.github/**
 .rksync/**
 .morg-sync/**
 _rksync-runtime-trash/**
