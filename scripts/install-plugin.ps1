@@ -1,4 +1,4 @@
-$pluginRoot = 'C:\Users\aaron\AppData\Local\Roblox\Plugins'
+$pluginRoot = Join-Path $env:LOCALAPPDATA 'Roblox\Plugins'
 $source = Join-Path $PSScriptRoot '..\roblox-plugin\RKsync.lua'
 $destination = Join-Path $pluginRoot 'RKsync.lua'
 $legacyDestination = Join-Path $pluginRoot 'MorgSync.lua'
@@ -9,4 +9,8 @@ if (Test-Path $legacyDestination) {
 }
 Copy-Item -Path $source -Destination $destination -Force
 
-Write-Host "Installed RKsync plugin to $destination"
+if ($?) {
+  Write-Host "Installed RKsync plugin to $destination"
+} else {
+  Write-Error "Failed to install plugin."
+}
