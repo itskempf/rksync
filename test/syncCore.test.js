@@ -14,6 +14,7 @@ const {
 
 test('name segments round-trip through encoding', () => {
   const samples = [
+    '',
     'ServerScriptService',
     'My Script',
     'こんにちは',
@@ -24,6 +25,8 @@ test('name segments round-trip through encoding', () => {
   for (const sample of samples) {
     assert.equal(decodeNameSegment(encodeNameSegment(sample)), sample);
   }
+
+  assert.equal(encodeNameSegment(''), '%00');
 });
 
 test('script filenames preserve class markers', () => {

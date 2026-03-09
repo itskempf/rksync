@@ -82,12 +82,18 @@ local function encodeNameSegment(value)
 			table.insert(result, string.format("%%%02X", byteValue))
 		end
 		encoded = table.concat(result)
+		if encoded == "" then
+			encoded = "%00"
+		end
 	end
 
 	return encoded
 end
 
 local function decodeNameSegment(segment)
+	if segment == "%00" then
+		return ""
+	end
 	return (segment:gsub("%%(%x%x)", function(hex)
 		return string.char(tonumber(hex, 16))
 	end))
