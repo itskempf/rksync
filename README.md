@@ -55,8 +55,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-plugin.ps1
 That copies `roblox-plugin/RKsync.lua` into:
 
 ```text
-C:\Users\aaron\AppData\Local\Roblox\Plugins
+<localappdata>\Roblox\Plugins
 ```
+
+If the automatic script fails, you can manually copy `roblox-plugin/RKsync.lua` into your current user's Roblox `Plugins` folder.
 
 ## Studio Setup
 
@@ -95,12 +97,24 @@ Suffix rules:
 - `.module.lua` / `.module.luau` => `ModuleScript`
 - plain `.lua` / `.luau` => `ModuleScript`
 
-## Settings
+## Config
 
-- `rksync.port`
-- `rksync.syncRoot`
+RKsync reads configuration from an optional workspace-root `.rksync.json` file. If not found, it falls back to VS Code settings.
 
-Reload VS Code after changing either setting so the local server restarts with the new config.
+Example `.rksync.json`:
+
+```json
+{
+  "port": 34872,
+  "syncRoot": "roblox-sync"
+}
+```
+
+Precedence:
+
+1. `.rksync.json`
+2. VS Code workspace settings (`rksync.port`, `rksync.syncRoot`)
+3. Default values
 
 ## Optional Ignore File
 
@@ -122,9 +136,18 @@ node --check .\extension.js
 npm run package
 ```
 
+## Troubleshooting
+
+- **Studio cannot connect**: Ensure the extension is running and the correct port is specified.
+- **HTTP requests disabled**: Enable "Allow HTTP Requests" in Studio under Game Settings > Security.
+- **Wrong port**: Ensure Studio and `.rksync.json` (or settings) ports match.
+- **Malformed config**: Check RKsync output channel in VS Code for `.rksync.json` parsing errors.
+- **Extension not running**: Open a valid workspace directory containing your scripts.
+- **Multiple workspace folders**: If you use a multi-root workspace, RKsync currently only uses the first folder.
+- **Same-machine expectation**: RKsync is designed to run the VS Code extension and Roblox Studio on the same local machine.
+
 ## Notes
 
-- The extension uses the first open workspace folder only.
 - RKsync syncs code objects, not arbitrary Roblox assets.
 - Missing intermediate ancestors from local-only paths are created as Roblox `Folder` instances.
 - Legacy `.morg-sync` state is migrated into `.rksync`.
