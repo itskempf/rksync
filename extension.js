@@ -13,10 +13,13 @@ const {
   LEGACY_STATE_DIR_NAME,
   STATE_DIR_NAME,
   STATE_FILE_NAME,
+  WORKSPACE_CONFIG_FILE_NAME,
   canonicalizeRelativePath,
   hashContent,
   isSupportedScriptFile,
   normalizeRelativePath,
+  parseConfiguredPort,
+  parseConfiguredSyncRoot,
   parseRelativeScriptPath,
   relativePathToInstancePath,
   toPosixPath
@@ -48,13 +51,30 @@ function createInitialState(syncRoot) {
   };
 }
 
-function pickConfiguredValue(primaryConfig, legacyConfig, key, defaultValue) {
+function pickConfiguredValueInfo(primaryConfig, legacyConfig, key, defaultValue) {
   const inspected = primaryConfig.inspect(key);
   const explicitValue = inspected?.workspaceFolderValue ?? inspected?.workspaceValue ?? inspected?.globalValue;
   if (explicitValue !== undefined) {
-    return explicitValue;
+    return {
+      value: explicitValue,
+      source: 'VS Code settings'
+    };
   }
-  return legacyConfig.get(key, defaultValue);
+
+  const legacyInspected = legacyConfig.inspect?.(key);
+  const legacyValue =
+    legacyInspected?.workspaceFolderValue ?? legacyInspected?.workspaceValue ?? legacyInspected?.globalValue;
+  if (legacyValue !== undefined) {
+    return {
+      value: legacyValue,
+      source: 'Legacy VS Code settings'
+    };
+  }
+
+  return {
+    value: defaultValue,
+    source: 'Defaults'
+  };
 }
 
 function formatTimestamp(timestamp) {
@@ -86,6 +106,16 @@ function formatRelativeTime(timestamp) {
 
   const hours = Math.floor(minutes / 60);
   return `${hours}h ago`;
+}
+
+function describeServerStartError(error, port) {
+  if (error?.code === 'EADDRINUSE') {
+    return `Port ${port} is already in use. Stop the other process or change RKsync port in ${WORKSPACE_CONFIG_FILE_NAME} or VS Code settings.`;
+  }
+  if (error?.code === 'EACCES') {
+    return `RKsync could not listen on port ${port} because access was denied. Choose a different port.`;
+  }
+  return error?.message || `RKsync could not start its localhost server on port ${port}.`;
 }
 
 function createTreeItem(label, description, iconId, colorId, command) {
@@ -323,6 +353,15 @@ class RKsyncStatusProvider extends RKsyncTreeProvider {
 
     items.push(
       createTreeNode({
+        label: 'Configuration',
+        description: info.configSource,
+        iconId: 'settings-gear',
+        tooltip: info.configTooltip
+      })
+    );
+
+    items.push(
+      createTreeNode({
         label: 'Tracked Files',
         description: `${info.fileCount} file(s)`,
         iconId: 'files',
@@ -333,6 +372,18 @@ class RKsyncStatusProvider extends RKsyncTreeProvider {
         ].join('\n')
       })
     );
+
+    if (info.workspaceMode !== 'Single workspace folder') {
+      items.push(
+        createTreeNode({
+          label: 'Workspace Mode',
+          description: info.workspaceMode,
+          iconId: 'info',
+          colorId: 'problemsWarningIcon.foreground',
+          tooltip: info.workspaceMode
+        })
+      );
+    }
 
     items.push(
       createTreeNode({
@@ -351,6 +402,18 @@ class RKsyncStatusProvider extends RKsyncTreeProvider {
         tooltip: info.lastReconcileTooltip
       })
     );
+
+    if (info.configWarning) {
+      items.push(
+        createTreeNode({
+          label: 'Config Warning',
+          description: 'Fallback active',
+          iconId: 'warning',
+          colorId: 'problemsWarningIcon.foreground',
+          tooltip: info.configWarning
+        })
+      );
+    }
 
     items.push(
       createTreeNode({
@@ -539,6 +602,8 @@ class RKsyncController {
     this.watchers = [];
     this.workspaceFolder = null;
     this.workspacePath = null;
+    this.workspaceConfigPath = null;
+    this.workspaceModeMessage = '';
     this.syncRootName = DEFAULT_SYNC_ROOT;
     this.syncRootPath = null;
     this.stateDirPath = null;
@@ -555,6 +620,8 @@ class RKsyncController {
     this.lastStudioAction = '';
     this.lastReconcileAt = 0;
     this.lastErrorMessage = '';
+    this.configurationSourceLabel = 'Defaults';
+    this.configurationWarningMessage = '';
     this.statusProvider = new RKsyncStatusProvider(this);
     this.activityProvider = new RKsyncActivityProvider(this);
     this.filesProvider = new RKsyncFilesProvider(this);
@@ -648,32 +715,107 @@ class RKsyncController {
     }
   }
 
-  getConfiguration() {
-    const config = vscode.workspace.getConfiguration('rksync');
-    const legacyConfig = vscode.workspace.getConfiguration('morgSync');
-    const configuredPort = pickConfiguredValue(config, legacyConfig, 'port', DEFAULT_PORT);
-    const configuredRoot = pickConfiguredValue(config, legacyConfig, 'syncRoot', DEFAULT_SYNC_ROOT);
+  async readWorkspaceConfigFile(warnings) {
+    if (!this.workspaceConfigPath || !fssync.existsSync(this.workspaceConfigPath)) {
+      return {};
+    }
+
+    try {
+      const raw = await fs.readFile(this.workspaceConfigPath, 'utf8');
+      const parsed = raw.trim() ? JSON.parse(raw) : {};
+      if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+        throw new Error(`${WORKSPACE_CONFIG_FILE_NAME} must contain a JSON object.`);
+      }
+      return parsed;
+    } catch (error) {
+      warnings.push(`Ignoring ${WORKSPACE_CONFIG_FILE_NAME}: ${error.message}`);
+      return {};
+    }
+  }
+
+  async getConfiguration() {
+    const warnings = [];
+    const config = vscode.workspace.getConfiguration('rksync', this.workspaceFolder?.uri);
+    const legacyConfig = vscode.workspace.getConfiguration('morgSync', this.workspaceFolder?.uri);
+    const portInfo = pickConfiguredValueInfo(config, legacyConfig, 'port', DEFAULT_PORT);
+    const syncRootInfo = pickConfiguredValueInfo(config, legacyConfig, 'syncRoot', DEFAULT_SYNC_ROOT);
+    const workspaceConfig = await this.readWorkspaceConfigFile(warnings);
+
+    let port = DEFAULT_PORT;
+    let syncRoot = DEFAULT_SYNC_ROOT;
+    let portSource = portInfo.source;
+    let syncRootSource = syncRootInfo.source;
+
+    try {
+      port = parseConfiguredPort(portInfo.value, DEFAULT_PORT);
+    } catch (error) {
+      warnings.push(`Invalid VS Code port setting. Using ${DEFAULT_PORT}. ${error.message}`);
+      port = DEFAULT_PORT;
+      portSource = 'Defaults';
+    }
+
+    try {
+      syncRoot = parseConfiguredSyncRoot(syncRootInfo.value, DEFAULT_SYNC_ROOT);
+    } catch (error) {
+      warnings.push(`Invalid VS Code sync root setting. Using ${DEFAULT_SYNC_ROOT}. ${error.message}`);
+      syncRoot = DEFAULT_SYNC_ROOT;
+      syncRootSource = 'Defaults';
+    }
+
+    if (Object.prototype.hasOwnProperty.call(workspaceConfig, 'port')) {
+      try {
+        port = parseConfiguredPort(workspaceConfig.port, port);
+        portSource = WORKSPACE_CONFIG_FILE_NAME;
+      } catch (error) {
+        warnings.push(`Invalid ${WORKSPACE_CONFIG_FILE_NAME} port. Using ${port}. ${error.message}`);
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(workspaceConfig, 'syncRoot')) {
+      try {
+        syncRoot = parseConfiguredSyncRoot(workspaceConfig.syncRoot, syncRoot);
+        syncRootSource = WORKSPACE_CONFIG_FILE_NAME;
+      } catch (error) {
+        warnings.push(`Invalid ${WORKSPACE_CONFIG_FILE_NAME} syncRoot. Using ${syncRoot}. ${error.message}`);
+      }
+    }
+
+    this.configurationSourceLabel = `Port: ${portSource} | Sync root: ${syncRootSource}`;
+    this.configurationWarningMessage = warnings.join(' | ');
+
+    for (const warning of warnings) {
+      this.log(warning);
+    }
+
+    if (warnings.length > 0) {
+      vscode.window.showWarningMessage(`RKsync configuration fallback active. ${warnings[0]}`);
+    }
+
     return {
-      port: Number.isInteger(configuredPort) ? configuredPort : DEFAULT_PORT,
-      syncRoot: typeof configuredRoot === 'string' && configuredRoot.trim() ? configuredRoot.trim() : DEFAULT_SYNC_ROOT
+      port,
+      syncRoot
     };
   }
 
   buildInfo() {
     const hasWorkspace = Boolean(this.workspaceFolder);
     const connected = this.isStudioConnected();
+    const workspaceMode = hasWorkspace
+      ? this.workspaceModeMessage || 'Single workspace folder'
+      : 'No workspace folder open';
 
-    let connectionSummary = 'Open a folder to start the local sync server.';
+    let connectionSummary = 'Open a folder to start the RKsync localhost server.';
     if (hasWorkspace && !this.serverRunning) {
       connectionSummary = this.lastErrorMessage
         ? `Server not running: ${this.lastErrorMessage}`
-        : 'Server not running.';
+        : 'Server not running yet.';
     } else if (this.serverRunning && connected) {
       connectionSummary = `Roblox Studio is connected. Last heartbeat ${formatRelativeTime(this.lastStudioSeenAt)}.`;
     } else if (this.serverRunning && this.lastStudioSeenAt) {
       connectionSummary = `Roblox Studio is not connected right now. Last heartbeat ${formatRelativeTime(this.lastStudioSeenAt)}.`;
     } else if (this.serverRunning) {
-      connectionSummary = 'Server is ready. Waiting for the RKsync Studio plugin to connect.';
+      connectionSummary =
+        'Server is ready on localhost. In Studio, keep the localhost URL, use Test Connection, then click Start Sync.';
     }
 
     const statusDetail = this.serverRunning
@@ -688,6 +830,9 @@ class RKsyncController {
 
     const statusTooltip = [
       `Workspace: ${this.workspaceFolder?.name ?? '(none)'}`,
+      `Workspace mode: ${workspaceMode}`,
+      `Workspace config: ${this.workspaceConfigPath ?? '(none)'}`,
+      `Configuration source: ${this.configurationSourceLabel}`,
       `Sync root: ${this.syncRootName}`,
       `Server: ${this.serverRunning ? `127.0.0.1:${this.serverPort}` : 'offline'}`,
       `Studio: ${connected ? 'connected' : 'not connected'}`,
@@ -695,14 +840,27 @@ class RKsyncController {
       `Last local scan: ${formatTimestamp(this.lastReconcileAt)}`,
       `Tracked files: ${Object.keys(this.state.scripts).length}`,
       `Journal depth: ${this.pendingJournal.length}`,
+      this.configurationWarningMessage
+        ? `Config warning: ${this.configurationWarningMessage}`
+        : 'Config warning: none',
       this.lastErrorMessage ? `Last error: ${this.lastErrorMessage}` : 'Last error: none'
     ].join('\n');
 
     return {
       connected,
       workspace: this.workspaceFolder?.name ?? '(none)',
+      workspaceMode,
       syncRoot: this.syncRootName,
       syncRootPath: this.syncRootPath,
+      configSource: this.configurationSourceLabel,
+      configWarning: this.configurationWarningMessage,
+      configTooltip: [
+        `Workspace config file: ${this.workspaceConfigPath ?? '(none)'}`,
+        `Configuration source: ${this.configurationSourceLabel}`,
+        this.configurationWarningMessage
+          ? `Fallback: ${this.configurationWarningMessage}`
+          : 'Fallback: none'
+      ].join('\n'),
       fileCount: Object.keys(this.state.scripts).length,
       tombstoneCount: Object.keys(this.state.tombstones).length,
       journalDepth: this.pendingJournal.length,
@@ -728,12 +886,14 @@ class RKsyncController {
 
   refreshVisualState(refreshDataViews = true) {
     const info = this.buildInfo();
-    this.statusItem.text = info.connected
-      ? '$(pass-filled) RKsync Connected'
-      : '$(error) RKsync Disconnected';
-    this.statusItem.color = new vscode.ThemeColor(
-      info.connected ? 'testing.iconPassed' : 'testing.iconFailed'
-    );
+    this.statusItem.text = !this.workspaceFolder
+      ? '$(folder-opened) RKsync Open Folder'
+      : info.connected
+        ? '$(pass-filled) RKsync Connected'
+        : '$(error) RKsync Disconnected';
+    this.statusItem.color = !this.workspaceFolder
+      ? new vscode.ThemeColor('testing.iconQueued')
+      : new vscode.ThemeColor(info.connected ? 'testing.iconPassed' : 'testing.iconFailed');
     this.statusItem.tooltip = info.statusTooltip;
     this.statusItem.command = 'rksync.showStatus';
     this.statusItem.show();
@@ -785,62 +945,60 @@ class RKsyncController {
 
     const folders = vscode.workspace.workspaceFolders ?? [];
     if (folders.length === 0) {
-      this.log('Extension activated without an open workspace folder.');
+      this.workspaceModeMessage = 'Open a folder to start RKsync.';
+      this.log('RKsync activated without an open workspace folder. Open a folder and the localhost server will start.');
       this.refreshVisualState(true);
       return;
     }
 
     this.workspaceFolder = folders[0];
     this.workspacePath = this.workspaceFolder.uri.fsPath;
-
-    let config = this.getConfiguration();
-    try {
-      const jsonPath = path.join(this.workspacePath, '.rksync.json');
-      if (fssync.existsSync(jsonPath)) {
-        const parsed = JSON.parse(fssync.readFileSync(jsonPath, 'utf8'));
-        if (parsed.port) config.port = parsed.port;
-        if (parsed.syncRoot) config.syncRoot = parsed.syncRoot;
-      }
-    } catch (err) {
-      this.log(`Malformed .rksync.json: ${err.message}`);
-      this.setLastError('Malformed .rksync.json');
-      vscode.window.showWarningMessage(`Malformed .rksync.json: ${err.message}`);
+    if (folders.length > 1) {
+      this.workspaceModeMessage = `Multiple workspace folders are open. RKsync is using only the first folder: ${this.workspaceFolder.name}`;
+      this.log(this.workspaceModeMessage);
+    } else {
+      this.workspaceModeMessage = 'Single workspace folder';
     }
-    const { port, syncRoot } = config;
 
-    this.syncRootName = syncRoot;
-    this.syncRootPath = path.join(this.workspacePath, syncRoot);
-    this.stateDirPath = path.join(this.workspacePath, STATE_DIR_NAME);
-    this.stateFilePath = path.join(this.stateDirPath, STATE_FILE_NAME);
-    this.legacyStateDirPath = path.join(this.workspacePath, LEGACY_STATE_DIR_NAME);
-    this.legacyStateFilePath = path.join(this.legacyStateDirPath, STATE_FILE_NAME);
+    this.workspaceConfigPath = path.join(this.workspacePath, WORKSPACE_CONFIG_FILE_NAME);
 
-    await this.migrateLegacyStateIfNeeded();
-    await fs.mkdir(this.syncRootPath, { recursive: true });
-    await fs.mkdir(this.stateDirPath, { recursive: true });
-    await this.loadState();
-    this.ignoreMatcher = new IgnoreMatcher(this.syncRootPath);
-    await this.canonicalizeTrackedPaths();
-    await this.reconcileLocalDisk({ emitOps: true, reason: 'extension startup' });
-    this.startWatchers();
+    let port = DEFAULT_PORT;
+    try {
+      const configuration = await this.getConfiguration();
+      port = configuration.port;
+      this.syncRootName = configuration.syncRoot;
+      this.syncRootPath = path.join(this.workspacePath, this.syncRootName);
+      this.stateDirPath = path.join(this.workspacePath, STATE_DIR_NAME);
+      this.stateFilePath = path.join(this.stateDirPath, STATE_FILE_NAME);
+      this.legacyStateDirPath = path.join(this.workspacePath, LEGACY_STATE_DIR_NAME);
+      this.legacyStateFilePath = path.join(this.legacyStateDirPath, STATE_FILE_NAME);
+
+      await this.migrateLegacyStateIfNeeded();
+      await fs.mkdir(this.syncRootPath, { recursive: true });
+      await fs.mkdir(this.stateDirPath, { recursive: true });
+      await this.loadState();
+      this.ignoreMatcher = new IgnoreMatcher(this.syncRootPath);
+      await this.canonicalizeTrackedPaths();
+      await this.reconcileLocalDisk({ emitOps: true, reason: 'extension startup' });
+      this.startWatchers();
+    } catch (error) {
+      this.setLastError(error.message);
+      this.log(`Failed to initialize RKsync for workspace ${this.workspaceFolder.name}: ${error.stack || error.message}`);
+      vscode.window.showErrorMessage(`RKsync could not prepare the workspace: ${error.message}`);
+      return;
+    }
 
     try {
       await this.startServer(port);
     } catch (error) {
+      const message = describeServerStartError(error, port);
       this.serverRunning = false;
       this.serverPort = port;
-      this.setLastError(error.message);
-      this.log(`Failed to start HTTP server: ${error.stack || error.message}`);
-      vscode.window.showErrorMessage(`RKsync could not start its server: ${error.message}`);
+      this.setLastError(message);
+      this.log(`Failed to start HTTP server on 127.0.0.1:${port}: ${error.stack || error.message}`);
+      vscode.window.showErrorMessage(message);
       return;
     }
-
-    if (folders.length > 1) {
-      const msg = `Multiple workspace folders detected. RKsync uses only the first folder: ${this.workspaceFolder.name}`;
-      this.log(msg);
-      vscode.window.showInformationMessage(msg);
-    }
-
     this.refreshVisualState(true);
   }
 
@@ -1042,6 +1200,8 @@ class RKsyncController {
     const lines = [
       `Connection: ${info.connected ? 'connected' : 'disconnected'}`,
       `Workspace: ${info.workspace}`,
+      `Workspace mode: ${info.workspaceMode}`,
+      `Configuration: ${info.configSource}`,
       `Sync root: ${info.syncRoot}`,
       `Server: ${info.serverRunning ? `127.0.0.1:${info.serverPort}` : 'offline'}`,
       `Last Studio heartbeat: ${info.lastStudioSeenLabel}`,
@@ -1050,6 +1210,7 @@ class RKsyncController {
       `Pending tombstones: ${info.tombstoneCount}`,
       `Journal depth: ${info.journalDepth}`,
       `Sequence: ${info.sequence}`,
+      `Config warning: ${info.configWarning || 'none'}`,
       `Last error: ${info.lastError || 'none'}`
     ];
     vscode.window.showInformationMessage(lines.join(' | '), { modal: false });
@@ -1790,6 +1951,7 @@ class RKsyncController {
           reason: 'full snapshot request'
         });
         const ops = this.buildFullSnapshotOps();
+        this.log(`Studio requested a full snapshot. Serving ${ops.length} operation(s).`);
         this.noteOpsServedToStudio(ops, `Sent full snapshot (${ops.length} change(s))`);
         this.writeJson(res, 200, {
           ok: true,
@@ -1810,6 +1972,9 @@ class RKsyncController {
           reason: 'sequence reset'
         });
         const ops = this.buildFullSnapshotOps();
+        this.log(
+          `Studio requested sequence ${since}, but server is at ${this.sequence}. Sending reset snapshot with ${ops.length} operation(s).`
+        );
         this.noteOpsServedToStudio(ops, `Reset Studio snapshot (${ops.length} change(s))`);
         this.writeJson(res, 200, {
           ok: true,

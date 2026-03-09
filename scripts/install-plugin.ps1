@@ -1,16 +1,31 @@
-$pluginRoot = Join-Path $env:LOCALAPPDATA 'Roblox\Plugins'
-$source = Join-Path $PSScriptRoot '..\roblox-plugin\RKsync.lua'
-$destination = Join-Path $pluginRoot 'RKsync.lua'
-$legacyDestination = Join-Path $pluginRoot 'MorgSync.lua'
+$ErrorActionPreference = 'Stop'
 
-New-Item -ItemType Directory -Force -Path $pluginRoot | Out-Null
-if (Test-Path $legacyDestination) {
-  Remove-Item -Path $legacyDestination -Force
+try {
+  if (-not $env:LOCALAPPDATA) {
+    throw 'LOCALAPPDATA is not set for the current user session.'
+  }
+
+  $pluginRoot = Join-Path $env:LOCALAPPDATA 'Roblox\Plugins'
+  $source = Join-Path $PSScriptRoot '..\roblox-plugin\RKsync.lua'
+  $destination = Join-Path $pluginRoot 'RKsync.lua'
+  $legacyDestination = Join-Path $pluginRoot 'MorgSync.lua'
+
+  if (-not (Test-Path -LiteralPath $source)) {
+    throw "Plugin source file was not found: $source"
+  }
+
+  New-Item -ItemType Directory -Force -Path $pluginRoot | Out-Null
+
+  if (Test-Path -LiteralPath $legacyDestination) {
+    Remove-Item -LiteralPath $legacyDestination -Force
+    Write-Host "Removed legacy plugin: $legacyDestination"
+  }
+
+  Copy-Item -LiteralPath $source -Destination $destination -Force
+  Write-Host "RKsync plugin installed successfully."
+  Write-Host "Destination: $destination"
 }
-Copy-Item -Path $source -Destination $destination -Force
-
-if ($?) {
-  Write-Host "Installed RKsync plugin to $destination"
-} else {
-  Write-Error "Failed to install plugin."
+catch {
+  Write-Error "RKsync plugin install failed. $($_.Exception.Message)"
+  exit 1
 }

@@ -1,7 +1,7 @@
 {
   "name": "rksync",
   "displayName": "RKsync",
-  "description": "Live sync Roblox Studio scripts with the current VS Code workspace.",
+  "description": "Local-first live sync between VS Code and Roblox Studio scripts.",
   "version": "0.2.2",
   "publisher": "itskempf",
   "license": "MIT",
@@ -100,7 +100,8 @@
   },
   "scripts": {
     "test": "node --test",
-    "package": "vsce package"
+    "package": "vsce package",
+    "install:plugin": "powershell -ExecutionPolicy Bypass -File .\\scripts\\install-plugin.ps1"
   },
   "devDependencies": {
     "@vscode/vsce": "^3.7.1"

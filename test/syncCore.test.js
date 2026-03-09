@@ -7,6 +7,8 @@ const {
   canonicalizeRelativePath,
   decodeNameSegment,
   encodeNameSegment,
+  parseConfiguredPort,
+  parseConfiguredSyncRoot,
   parseRelativeScriptPath,
   parseScriptFileName,
   relativePathToInstancePath
@@ -70,4 +72,19 @@ test('canonicalizeRelativePath fixes mismatched suffixes', () => {
     canonicalizeRelativePath('StarterPlayer/StarterPlayerScripts/KempyGui.server.luau', 'LocalScript'),
     'StarterPlayer/StarterPlayerScripts/KempyGui.client.luau'
   );
+});
+
+test('parseConfiguredPort accepts valid values and rejects unsafe ones', () => {
+  assert.equal(parseConfiguredPort(34872), 34872);
+  assert.equal(parseConfiguredPort('34873'), 34873);
+  assert.throws(() => parseConfiguredPort(80), /between 1024 and 65535/);
+  assert.throws(() => parseConfiguredPort('abc'), /between 1024 and 65535/);
+});
+
+test('parseConfiguredSyncRoot keeps sync roots relative to the workspace', () => {
+  assert.equal(parseConfiguredSyncRoot('roblox-sync'), 'roblox-sync');
+  assert.equal(parseConfiguredSyncRoot('./nested/sync'), 'nested/sync');
+  assert.throws(() => parseConfiguredSyncRoot('.rksync'), /cannot point at RKsync state folders/);
+  assert.throws(() => parseConfiguredSyncRoot('C:/temp/sync'), /cannot be absolute/);
+  assert.throws(() => parseConfiguredSyncRoot('../escape'), /Invalid sync path/);
 });

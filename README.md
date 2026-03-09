@@ -3,40 +3,31 @@
 [![CI](https://github.com/itskempf/rksync/actions/workflows/ci.yml/badge.svg)](https://github.com/itskempf/rksync/actions/workflows/ci.yml)
 [![Release](https://github.com/itskempf/rksync/actions/workflows/release.yml/badge.svg)](https://github.com/itskempf/rksync/actions/workflows/release.yml)
 
-RKsync is a local-first Roblox scripting workflow:
+RKsync is a lightweight, local-first live sync workflow for Roblox scripting.
 
-- a VS Code extension hosts a localhost sync server for your workspace
-- a Roblox Studio plugin mirrors script changes between Studio and disk
+- The VS Code extension hosts a localhost sync server for the current workspace.
+- The Roblox Studio plugin connects to that server and mirrors script changes both ways.
+- Sync state lives in `.rksync/`.
+- Mirrored scripts live in `roblox-sync/` by default.
 
-It is built for fast live-editing without setting up Rojo or a larger build pipeline.
+RKsync is meant for fast iteration on scripts without bringing in a heavier build pipeline.
 
 ## Features
 
 - Live sync for `Script`, `LocalScript`, and `ModuleScript`
-- Roblox hierarchy mirrored into a local `roblox-sync/` folder
-- Stable reconnect behavior for offline edits
-- `.rksyncignore` support for local scratch files and generated artifacts
+- Offline-friendly reconnect behavior for local edits
 - Delete tombstones so removed files stay removed after reopen
-- VS Code sidebar with `Status`, `Live Files`, and `Recent Activity`
-- Roblox Studio dock widget with connection state and sync counters
-
-## Repo Layout
-
-```text
-extension.js                 VS Code extension entrypoint
-lib/syncCore.js              Shared path and sync helpers
-roblox-plugin/RKsync.lua     Roblox Studio plugin source
-scripts/install-plugin.ps1   Local plugin installer
-test/syncCore.test.js        Node tests
-```
-
-`roblox-sync/` is intentionally ignored in git. That folder is the local mirrored workspace, not source-of-truth repo content.
+- Conflict copies saved under `.rksync/conflicts/` instead of silently overwriting local changes
+- `.rksyncignore` support for local scratch files and generated artifacts
+- VS Code sidebar views for status, live files, and recent activity
+- Roblox Studio dock widget with connection state, counters, manual pull, snapshot push, and connection testing
+- Legacy `.morg-sync` state and `MorgSyncId` attribute migration support
 
 ## Install
 
 ### VS Code extension
 
-Build a `.vsix` locally:
+Build the extension from the repo root:
 
 ```powershell
 npm install
@@ -44,36 +35,94 @@ npm test
 npm run package
 ```
 
-Then install the generated `.vsix` in VS Code.
+That creates a `.vsix` package such as `rksync-<version>.vsix`. Install it in VS Code with:
+
+```powershell
+code --install-extension .\rksync-<version>.vsix --force
+```
+
+You can also use the VS Code Extensions UI and choose `Install from VSIX`.
 
 ### Roblox Studio plugin
+
+The included installer targets the standard Windows Roblox Studio plugin folder.
+
+Install the plugin with the included PowerShell script:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install-plugin.ps1
 ```
 
-That copies `roblox-plugin/RKsync.lua` into:
+The installer resolves the current user's Roblox plugin folder automatically using `%LOCALAPPDATA%\Roblox\Plugins`, creates it if needed, removes a legacy `MorgSync.lua` file if present, and copies `roblox-plugin\RKsync.lua`.
+
+### Manual plugin install fallback
+
+If you do not want to run the script, copy this file manually:
 
 ```text
-<localappdata>\Roblox\Plugins
+roblox-plugin\RKsync.lua
 ```
 
-If the automatic script fails, you can manually copy `roblox-plugin/RKsync.lua` into your current user's Roblox `Plugins` folder.
+Into:
 
-## Studio Setup
+```text
+%LOCALAPPDATA%\Roblox\Plugins
+```
 
-1. Open `File > Game Settings > Security`
-2. Enable `Allow HTTP Requests`
-3. Open the `RKsync` plugin panel
-4. Leave the default URL as `http://127.0.0.1:34872` unless you changed the port
-5. Click `Start Sync`
+## First-Time Setup
+
+1. Open the project folder in VS Code.
+2. Make sure the RKsync extension is installed and active in that workspace.
+3. In Roblox Studio, open `File > Game Settings > Security`.
+4. Enable `Allow HTTP Requests`.
+5. Open the `RKsync` plugin panel.
+6. Leave the default URL as `http://127.0.0.1:34872` unless you changed the port.
+7. Click `Test Connection`.
+8. If that succeeds, click `Start Sync`.
+
+RKsync expects Roblox Studio and VS Code to be running on the same machine. Keep the URL on `localhost` or `127.0.0.1`.
+
+## Configuration
+
+RKsync supports three configuration sources, in this order:
+
+1. Workspace file `.rksync.json`
+2. VS Code settings `rksync.port` and `rksync.syncRoot`
+3. Built-in defaults
+
+Example `.rksync.json`:
+
+```json
+{
+  "port": 34872,
+  "syncRoot": "roblox-sync"
+}
+```
+
+Supported fields:
+
+- `port`
+- `syncRoot`
+
+Rules:
+
+- `syncRoot` must stay inside the workspace
+- malformed `.rksync.json` does not stop RKsync from activating
+- malformed config falls back safely and logs a warning in the RKsync output
+
+VS Code settings are still supported:
+
+- `rksync.port`
+- `rksync.syncRoot`
+
+Reload the VS Code window after changing `.rksync.json` or the VS Code settings so the localhost server restarts with the new values.
 
 ## Synced File Mapping
 
 Default sync root:
 
 ```text
-<workspace>/roblox-sync/
+<workspace>\roblox-sync\
 ```
 
 Example:
@@ -97,28 +146,11 @@ Suffix rules:
 - `.module.lua` / `.module.luau` => `ModuleScript`
 - plain `.lua` / `.luau` => `ModuleScript`
 
-## Config
+Missing intermediate ancestors from local-only paths are created in Studio as `Folder` instances.
 
-RKsync reads configuration from an optional workspace-root `.rksync.json` file. If not found, it falls back to VS Code settings.
+## Ignore Rules
 
-Example `.rksync.json`:
-
-```json
-{
-  "port": 34872,
-  "syncRoot": "roblox-sync"
-}
-```
-
-Precedence:
-
-1. `.rksync.json`
-2. VS Code workspace settings (`rksync.port`, `rksync.syncRoot`)
-3. Default values
-
-## Optional Ignore File
-
-Create `roblox-sync/.rksyncignore` to skip local files or folders that should not sync back into Studio.
+Create `roblox-sync/.rksyncignore` to keep specific local files or folders out of Studio sync.
 
 Example:
 
@@ -128,28 +160,55 @@ build/
 /StarterPlayer/Secrets.client.luau
 ```
 
+## Troubleshooting
+
+### Studio cannot connect
+
+- Make sure the RKsync VS Code extension is active in the same workspace you want to sync
+- Keep the plugin URL on `http://127.0.0.1:<port>` or `http://localhost:<port>`
+- Use `Test Connection` before `Start Sync`
+
+### HTTP requests disabled
+
+Enable `Allow HTTP Requests` in `File > Game Settings > Security`, then retry from the plugin.
+
+### Wrong port
+
+If you change the port in `.rksync.json` or VS Code settings, update the Studio plugin URL to match and reload VS Code so the extension restarts on that port.
+
+### Malformed `.rksync.json`
+
+RKsync falls back to VS Code settings or defaults, logs a warning to the RKsync output channel, and keeps running.
+
+### Extension not running
+
+Open the project folder in VS Code and check the RKsync sidebar or output channel. If the localhost server could not start, RKsync shows the error there.
+
+### Multi-root workspaces
+
+RKsync currently uses the first open workspace folder only. If you use a multi-root workspace, make sure the folder you want to sync is the first one.
+
+### Localhost expectation
+
+RKsync is local-only. It is not designed for LAN or remote machine sync. Roblox Studio and VS Code should both run on the same machine.
+
 ## Development
 
 ```powershell
+npm install
 npm test
 node --check .\extension.js
 npm run package
 ```
 
-## Troubleshooting
+Useful helper:
 
-- **Studio cannot connect**: Ensure the extension is running and the correct port is specified.
-- **HTTP requests disabled**: Enable "Allow HTTP Requests" in Studio under Game Settings > Security.
-- **Wrong port**: Ensure Studio and `.rksync.json` (or settings) ports match.
-- **Malformed config**: Check RKsync output channel in VS Code for `.rksync.json` parsing errors.
-- **Extension not running**: Open a valid workspace directory containing your scripts.
-- **Multiple workspace folders**: If you use a multi-root workspace, RKsync currently only uses the first folder.
-- **Same-machine expectation**: RKsync is designed to run the VS Code extension and Roblox Studio on the same local machine.
+```powershell
+npm run install:plugin
+```
 
 ## Notes
 
-- RKsync syncs code objects, not arbitrary Roblox assets.
-- Missing intermediate ancestors from local-only paths are created as Roblox `Folder` instances.
-- Legacy `.morg-sync` state is migrated into `.rksync`.
+- RKsync syncs Roblox script objects, not arbitrary assets.
 - Runtime-only roots such as `CoreGui`, `CorePackages`, and live `Players` descendants are ignored.
-- Divergent Studio edits are saved under `.rksync/conflicts/` instead of silently overwriting local unsynced work.
+- `roblox-sync/` is intentionally ignored in git because it is the live mirror, not the source repo itself.

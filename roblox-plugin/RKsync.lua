@@ -231,9 +231,9 @@ local widgetInfo = DockWidgetPluginGuiInfo.new(
 	true,
 	false,
 	360,
-	300,
+	336,
 	280,
-	220
+	240
 )
 local widget = plugin:CreateDockWidgetPluginGui(PLUGIN_WIDGET_ID, widgetInfo)
 widget.Title = "RKsync"
@@ -291,7 +291,7 @@ rowLayout.Padding = UDim.new(0, 8)
 rowLayout.Parent = buttonRow
 
 local toggleButton = Instance.new("TextButton")
-toggleButton.Size = UDim2.new(0.33, -4, 1, 0)
+toggleButton.Size = UDim2.new(0.5, -4, 1, 0)
 toggleButton.BackgroundColor3 = Color3.fromRGB(62, 100, 190)
 toggleButton.BorderSizePixel = 0
 toggleButton.TextColor3 = Color3.new(1, 1, 1)
@@ -301,7 +301,7 @@ toggleButton.Text = "Start Sync"
 toggleButton.Parent = buttonRow
 
 local snapshotButton = Instance.new("TextButton")
-snapshotButton.Size = UDim2.new(0.33, -4, 1, 0)
+snapshotButton.Size = UDim2.new(0.5, -4, 1, 0)
 snapshotButton.BackgroundColor3 = Color3.fromRGB(70, 70, 84)
 snapshotButton.BorderSizePixel = 0
 snapshotButton.TextColor3 = Color3.new(1, 1, 1)
@@ -310,32 +310,46 @@ snapshotButton.Font = Enum.Font.SourceSansSemibold
 snapshotButton.Text = "Push Snapshot"
 snapshotButton.Parent = buttonRow
 
-local testConnectionButton = Instance.new("TextButton")
-testConnectionButton.Size = UDim2.new(0.34, -4, 1, 0)
-testConnectionButton.BackgroundColor3 = Color3.fromRGB(80, 80, 94)
-testConnectionButton.BorderSizePixel = 0
-testConnectionButton.TextColor3 = Color3.new(1, 1, 1)
-testConnectionButton.TextSize = 15
-testConnectionButton.Font = Enum.Font.SourceSansSemibold
-testConnectionButton.Text = "Test Connection"
-testConnectionButton.Parent = buttonRow
+local utilityButtonRow = Instance.new("Frame")
+utilityButtonRow.Size = UDim2.new(1, 0, 0, 32)
+utilityButtonRow.BackgroundTransparency = 1
+utilityButtonRow.Parent = rootFrame
+
+local utilityRowLayout = Instance.new("UIListLayout")
+utilityRowLayout.FillDirection = Enum.FillDirection.Horizontal
+utilityRowLayout.Padding = UDim.new(0, 8)
+utilityRowLayout.Parent = utilityButtonRow
 
 local pullButton = Instance.new("TextButton")
-pullButton.Size = UDim2.new(1, 0, 0, 32)
+pullButton.Size = UDim2.new(0.5, -4, 1, 0)
 pullButton.BackgroundColor3 = Color3.fromRGB(52, 82, 146)
 pullButton.BorderSizePixel = 0
 pullButton.TextColor3 = Color3.new(1, 1, 1)
 pullButton.TextSize = 14
 pullButton.Font = Enum.Font.SourceSansSemibold
 pullButton.Text = "Pull Now"
-pullButton.Parent = rootFrame
+pullButton.Parent = utilityButtonRow
 
 local pullCorner = Instance.new("UICorner")
 pullCorner.CornerRadius = UDim.new(0, 6)
 pullCorner.Parent = pullButton
 
+local testConnectionButton = Instance.new("TextButton")
+testConnectionButton.Size = UDim2.new(0.5, -4, 1, 0)
+testConnectionButton.BackgroundColor3 = Color3.fromRGB(74, 88, 120)
+testConnectionButton.BorderSizePixel = 0
+testConnectionButton.TextColor3 = Color3.new(1, 1, 1)
+testConnectionButton.TextSize = 14
+testConnectionButton.Font = Enum.Font.SourceSansSemibold
+testConnectionButton.Text = "Test Connection"
+testConnectionButton.Parent = utilityButtonRow
+
+local testConnectionCorner = Instance.new("UICorner")
+testConnectionCorner.CornerRadius = UDim.new(0, 6)
+testConnectionCorner.Parent = testConnectionButton
+
 local statusFrame = Instance.new("Frame")
-statusFrame.Size = UDim2.new(1, 0, 0, 58)
+statusFrame.Size = UDim2.new(1, 0, 0, 72)
 statusFrame.BackgroundColor3 = Color3.fromRGB(36, 36, 44)
 statusFrame.BorderColor3 = Color3.fromRGB(60, 60, 70)
 statusFrame.Parent = rootFrame
@@ -370,14 +384,16 @@ statusLabel.TextXAlignment = Enum.TextXAlignment.Left
 statusLabel.Parent = statusFrame
 
 local statusDetailLabel = Instance.new("TextLabel")
-statusDetailLabel.Size = UDim2.new(1, -22, 0, 18)
+statusDetailLabel.Size = UDim2.new(1, -22, 0, 32)
 statusDetailLabel.Position = UDim2.fromOffset(22, 22)
 statusDetailLabel.BackgroundTransparency = 1
-statusDetailLabel.Text = "Waiting for local server"
+statusDetailLabel.Text = "Waiting for the VS Code RKsync server"
 statusDetailLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
 statusDetailLabel.Font = Enum.Font.SourceSans
 statusDetailLabel.TextSize = 14
+statusDetailLabel.TextWrapped = true
 statusDetailLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusDetailLabel.TextYAlignment = Enum.TextYAlignment.Top
 statusDetailLabel.Parent = statusFrame
 
 local statsFrame = Instance.new("Frame")
@@ -406,12 +422,12 @@ statsLabel.TextYAlignment = Enum.TextYAlignment.Top
 statsLabel.Parent = statsFrame
 
 local hintLabel = Instance.new("TextLabel")
-hintLabel.Size = UDim2.new(1, 0, 1, -264)
+hintLabel.Size = UDim2.new(1, 0, 0, 72)
 hintLabel.BackgroundTransparency = 1
 hintLabel.TextWrapped = true
 hintLabel.TextYAlignment = Enum.TextYAlignment.Top
 hintLabel.TextXAlignment = Enum.TextXAlignment.Left
-hintLabel.Text = "Requirements:\n1. Run the VS Code RKsync extension in the same workspace.\n2. Enable Allow HTTP Requests in Studio.\n3. Keep this plugin connected."
+hintLabel.Text = "Setup:\n1. Open the same workspace in VS Code.\n2. Keep the URL on localhost.\n3. Enable Allow HTTP Requests.\n4. Use Test Connection, then Start Sync."
 hintLabel.TextColor3 = Color3.fromRGB(190, 190, 200)
 hintLabel.Font = Enum.Font.SourceSans
 hintLabel.TextSize = 15
@@ -423,6 +439,7 @@ local ui = {
 	statusLabel = statusLabel,
 	statsLabel = statsLabel,
 	pullButton = pullButton,
+	testConnectionButton = testConnectionButton,
 	urlBox = urlBox,
 	toggleButton = toggleButton,
 }
@@ -443,7 +460,7 @@ local state = {
 	lastObserved = {},
 	workspaceName = "",
 	syncRootName = "",
-	statusMessage = "Waiting for local server",
+	statusMessage = "Waiting for the VS Code RKsync server",
 	statusMode = "offline",
 	lastSyncAt = "",
 	serverScriptCount = 0,
@@ -545,6 +562,108 @@ local function noteSync(message, mode)
 	renderStatus()
 end
 
+local function trimString(value)
+	return (tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function clearServerDetails()
+	state.workspaceName = ""
+	state.syncRootName = ""
+	state.serverScriptCount = 0
+	state.serverTombstoneCount = 0
+end
+
+local function normalizeServerUrl(rawValue)
+	local normalized = trimString(rawValue)
+	if normalized == "" then
+		normalized = DEFAULT_SERVER_URL
+	end
+
+	normalized = normalized:gsub("/+$", "")
+
+	local protocol, remainder = normalized:match("^(https?)://(.+)$")
+	if protocol ~= "http" then
+		return nil, "Use a full http:// URL like http://127.0.0.1:34872."
+	end
+
+	local host, port = remainder:match("^([^/:]+):(%d+)$")
+	if not host or not port then
+		return nil, "Use a full local URL like http://127.0.0.1:34872."
+	end
+
+	local lowerHost = string.lower(host)
+	if lowerHost ~= "127.0.0.1" and lowerHost ~= "localhost" then
+		return nil, "RKsync expects Studio and VS Code on the same machine. Use localhost or 127.0.0.1."
+	end
+
+	local portNumber = tonumber(port)
+	if not portNumber or portNumber < 1 or portNumber > 65535 then
+		return nil, "Use a port between 1 and 65535."
+	end
+
+	return string.format("http://%s:%d", lowerHost == "localhost" and "localhost" or "127.0.0.1", portNumber)
+end
+
+local function decodeResponseBody(body)
+	if type(body) ~= "string" or body == "" then
+		return nil
+	end
+
+	local success, decoded = pcall(function()
+		return HttpService:JSONDecode(body)
+	end)
+	if success and type(decoded) == "table" then
+		return decoded
+	end
+
+	return nil
+end
+
+local function explainRequestFailure(rawError)
+	local message = trimString(rawError)
+	if message == "" then
+		message = "Unknown connection error."
+	end
+
+	local lowerMessage = string.lower(message)
+	if string.find(lowerMessage, "http requests are not enabled", 1, true)
+		or string.find(lowerMessage, "allow http requests", 1, true)
+		or string.find(lowerMessage, "trust check failed", 1, true)
+		or string.find(lowerMessage, "http requests can only be executed", 1, true) then
+		return "Enable Allow HTTP Requests in File > Game Settings > Security, then try again."
+	end
+
+	if string.find(lowerMessage, "invalid url", 1, true) then
+		return "Use a full local URL like http://127.0.0.1:34872."
+	end
+
+	if string.find(lowerMessage, "connectfail", 1, true)
+		or string.find(lowerMessage, "connection refused", 1, true)
+		or string.find(lowerMessage, "timed out", 1, true)
+		or string.find(lowerMessage, "socket", 1, true)
+		or string.find(lowerMessage, "refused", 1, true) then
+		return "Could not reach the RKsync VS Code server. Open the same workspace in VS Code and keep the localhost URL."
+	end
+
+	if string.find(lowerMessage, "route not found", 1, true) then
+		return "RKsync server responded, but the plugin and extension do not match. Update both to the same build."
+	end
+
+	return message
+end
+
+local function applyServerUrlFromInput()
+	local normalizedUrl, errorMessage = normalizeServerUrl(urlBox.Text)
+	if not normalizedUrl then
+		return nil, errorMessage
+	end
+
+	state.serverUrl = normalizedUrl
+	urlBox.Text = normalizedUrl
+	plugin:SetSetting("serverUrl", state.serverUrl)
+	return normalizedUrl
+end
+
 local function isPlaySessionRunning()
 	local success, running = pcall(function()
 		return RunService:IsRunning()
@@ -557,7 +676,7 @@ local function ensureSyncCanUseNetwork()
 		return true
 	end
 
-	local pausedMessage = "Play test running. RKsync pauses network sync until the session stops."
+	local pausedMessage = "Play test running. RKsync pauses network sync until the play session stops."
 	if state.statusMode ~= "paused" or state.statusMessage ~= pausedMessage then
 		logStatus("paused", pausedMessage)
 	end
@@ -587,12 +706,60 @@ local function request(method, route, payload)
 		Body = body,
 	})
 	if not response.Success then
-		error(string.format("HTTP %s %s failed: %s", method, route, response.Body))
+		local decoded = decodeResponseBody(response.Body)
+		local detail = (decoded and decoded.error) or trimString(response.StatusMessage) or trimString(response.Body)
+		if detail == "" then
+			detail = string.format("HTTP %s %s failed.", method, route)
+		end
+		error(detail)
 	end
 	if response.Body == "" then
 		return {}
 	end
-	return HttpService:JSONDecode(response.Body)
+	local decoded = HttpService:JSONDecode(response.Body)
+	if type(decoded) == "table" and decoded.ok == false and type(decoded.error) == "string" then
+		error(decoded.error)
+	end
+	return decoded
+end
+
+local function performHello(failurePrefix)
+	local success, resultOrError = pcall(function()
+		return request("GET", "/hello")
+	end)
+	if not success or not resultOrError or not resultOrError.ok then
+		clearServerDetails()
+		return false, string.format("%s%s", failurePrefix or "", explainRequestFailure(resultOrError))
+	end
+
+	state.workspaceName = resultOrError.workspaceName or ""
+	state.syncRootName = resultOrError.syncRoot or ""
+	applyServerCounts(resultOrError)
+	return true, resultOrError
+end
+
+local function testConnection()
+	local normalizedUrl, urlError = applyServerUrlFromInput()
+	if not normalizedUrl then
+		clearServerDetails()
+		logStatus("offline", urlError)
+		return false
+	end
+
+	if not ensureSyncCanUseNetwork() then
+		return false
+	end
+
+	logStatus("idle", "Testing localhost connection to " .. state.serverUrl)
+
+	local helloSuccess, helloResultOrMessage = performHello("Connection test failed. ")
+	if not helloSuccess then
+		logStatus("offline", helloResultOrMessage)
+		return false
+	end
+
+	logStatus("online", "Server reachable. Click Start Sync to begin live sync.")
+	return true, helloResultOrMessage
 end
 
 local function queueOp(op)
@@ -871,7 +1038,10 @@ local function flushQueue()
 			state.queuedOps[op.id] = op
 		end
 		updateStats()
-		logStatus("offline", string.format("Push failed. %d change(s) queued for reconnect.", #batched))
+		logStatus(
+			"offline",
+			string.format("Push failed. %d change(s) queued for reconnect. %s", #batched, explainRequestFailure(result))
+		)
 		return
 	end
 
@@ -940,7 +1110,7 @@ local function pullLoop(token)
 				return result
 			end)
 			if not success and resultOrError ~= "paused" then
-				logStatus("offline", "Pull failed: " .. tostring(resultOrError))
+				logStatus("offline", "Pull failed. " .. explainRequestFailure(resultOrError))
 			end
 			task.wait(PULL_INTERVAL_SECONDS)
 		end
@@ -977,13 +1147,13 @@ local function pullFullSnapshot()
 end
 
 local function startSync()
-	local normalizedUrl = string.gsub(string.gsub(urlBox.Text, "%s+$", ""), "^%s+", "")
-	if normalizedUrl == "" then
-		normalizedUrl = DEFAULT_SERVER_URL
+	local normalizedUrl, urlError = applyServerUrlFromInput()
+	if not normalizedUrl then
+		clearServerDetails()
+		logStatus("offline", urlError)
+		return
 	end
 
-	state.serverUrl = normalizedUrl
-	plugin:SetSetting("serverUrl", state.serverUrl)
 	state.enabled = true
 	state.stopToken += 1
 	state.pullSequence = 0
@@ -994,7 +1164,7 @@ local function startSync()
 	state.serverTombstoneCount = 0
 	plugin:SetSetting("enabled", true)
 	ui.toggleButton.Text = "Stop Sync"
-	logStatus("idle", "Connecting to " .. state.serverUrl)
+	logStatus("idle", "Connecting to the RKsync localhost server at " .. state.serverUrl)
 
 	for _, descendant in ipairs(game:GetDescendants()) do
 		if isSyncableScript(descendant) then
@@ -1003,34 +1173,21 @@ local function startSync()
 	end
 
 	if isPlaySessionRunning() then
-		logStatus("paused", "Play test running. RKsync will reconnect when the session stops.")
+		logStatus("paused", "Play test running. RKsync will reconnect when the play session stops.")
 		pullLoop(state.stopToken)
 		flushLoop(state.stopToken)
 		snapshotLoop(state.stopToken)
 		return
 	end
 
-	local helloSuccess, helloResult = pcall(function()
-		return request("GET", "/hello")
-	end)
-	if not helloSuccess or not helloResult or not helloResult.ok then
-		state.workspaceName = ""
-		state.syncRootName = ""
-		state.serverScriptCount = 0
-		state.serverTombstoneCount = 0
+	local helloSuccess, helloResultOrMessage = performHello("Connection failed. ")
+	if not helloSuccess then
 		state.enabled = false
 		plugin:SetSetting("enabled", false)
 		ui.toggleButton.Text = "Start Sync"
-		local errMsg = tostring(helloResult)
-		if string.find(errMsg, "Http requests are not enabled") or string.find(errMsg, "Trust check failed") then
-			errMsg = "Allow HTTP Requests not enabled in Studio. " .. errMsg
-		end
-		logStatus("offline", "Connection failed: " .. errMsg)
+		logStatus("offline", helloResultOrMessage)
 		return
 	end
-	state.workspaceName = helloResult.workspaceName or ""
-	state.syncRootName = helloResult.syncRoot or ""
-	applyServerCounts(helloResult)
 
 	local pullSuccess, pullResult = pcall(function()
 		pullFullSnapshot()
@@ -1039,12 +1196,12 @@ local function startSync()
 		state.enabled = false
 		plugin:SetSetting("enabled", false)
 		ui.toggleButton.Text = "Start Sync"
-		logStatus("offline", "Initial pull failed: " .. tostring(pullResult))
+		logStatus("offline", "Initial pull failed. " .. explainRequestFailure(pullResult))
 		return
 	end
 
 	pushFullSnapshot()
-	logStatus("online", string.format("Connected to %s (%d files ready)", state.serverUrl, state.serverScriptCount))
+	logStatus("online", string.format("Connected to %s (%d file(s) mirrored)", state.serverUrl, state.serverScriptCount))
 	pullLoop(state.stopToken)
 	flushLoop(state.stopToken)
 	snapshotLoop(state.stopToken)
@@ -1057,28 +1214,6 @@ local function stopSync()
 	ui.toggleButton.Text = "Start Sync"
 	logStatus("offline", "Sync stopped")
 end
-
-testConnectionButton.MouseButton1Click:Connect(function()
-	local normalizedUrl = string.gsub(string.gsub(urlBox.Text, "%s+$", ""), "^%s+", "")
-	if normalizedUrl == "" then
-		normalizedUrl = DEFAULT_SERVER_URL
-	end
-	local prevUrl = state.serverUrl
-	state.serverUrl = normalizedUrl
-	local success, result = pcall(function()
-		return request("GET", "/hello")
-	end)
-	state.serverUrl = prevUrl
-	if success and result and result.ok then
-		logStatus("online", string.format("Connected | Workspace: %s | Root: %s | Scripts: %d", result.workspaceName or "", result.syncRoot or "", result.counts and result.counts.scripts or 0))
-	else
-		local errMsg = tostring(result)
-		if string.find(errMsg, "Http requests are not enabled") or string.find(errMsg, "Trust check failed") then
-			errMsg = "Allow HTTP Requests not enabled in Studio. " .. errMsg
-		end
-		logStatus("offline", "Connection failed: " .. errMsg)
-	end
-end)
 
 ui.toggleButton.MouseButton1Click:Connect(function()
 	if state.enabled then
@@ -1108,20 +1243,23 @@ pullButton.MouseButton1Click:Connect(function()
 		return result
 	end)
 	if not success and resultOrError ~= "paused" then
-		logStatus("offline", "Manual pull failed: " .. tostring(resultOrError))
+		logStatus("offline", "Manual pull failed. " .. explainRequestFailure(resultOrError))
 	end
+end)
+
+ui.testConnectionButton.MouseButton1Click:Connect(function()
+	testConnection()
 end)
 
 urlBox.FocusLost:Connect(function(enterPressed)
 	if not enterPressed then
 		return
 	end
-	local normalizedUrl = string.gsub(string.gsub(urlBox.Text, "%s+$", ""), "^%s+", "")
-	if normalizedUrl == "" then
-		normalizedUrl = DEFAULT_SERVER_URL
+	local normalizedUrl, urlError = applyServerUrlFromInput()
+	if not normalizedUrl then
+		logStatus("offline", urlError)
+		return
 	end
-	state.serverUrl = normalizedUrl
-	plugin:SetSetting("serverUrl", state.serverUrl)
 	if state.enabled then
 		stopSync()
 		startSync()
@@ -1160,5 +1298,5 @@ if state.enabled then
 	ui.toggleButton.Text = "Stop Sync"
 	startSync()
 else
-	logStatus("offline", "Waiting for local server")
+	logStatus("offline", "Waiting for the VS Code RKsync server")
 end
