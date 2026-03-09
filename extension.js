@@ -20,6 +20,7 @@ const {
   relativePathToInstancePath,
   toPosixPath
 } = require('./lib/syncCore');
+const { IgnoreMatcher } = require('./lib/ignoreMatcher');
 
 const JOURNAL_LIMIT = 1000;
 const TOMBSTONE_LIMIT = 500;
