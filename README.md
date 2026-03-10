@@ -43,11 +43,23 @@ code --install-extension .\rksync-<version>.vsix --force
 
 You can also use the VS Code Extensions UI and choose `Install from VSIX`.
 
+RKsync also exposes a built-in VS Code command for the Roblox Studio plugin:
+
+```text
+RKsync: Install Roblox Studio Plugin
+```
+
+You can run it from the Command Palette or from the RKsync status view for a one-click install.
+
 ### Roblox Studio plugin
 
-The included installer targets the standard Windows Roblox Studio plugin folder.
+The easiest path is the built-in VS Code command:
 
-Install the plugin with the included PowerShell script:
+```text
+RKsync: Install Roblox Studio Plugin
+```
+
+If you prefer a script, the included installer targets the standard Windows Roblox Studio plugin folder:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install-plugin.ps1
@@ -73,12 +85,13 @@ Into:
 
 1. Open the project folder in VS Code.
 2. Make sure the RKsync extension is installed and active in that workspace.
-3. In Roblox Studio, open `File > Game Settings > Security`.
-4. Enable `Allow HTTP Requests`.
-5. Open the `RKsync` plugin panel.
-6. Leave the default URL as `http://127.0.0.1:34872` unless you changed the port.
-7. Click `Test Connection`.
-8. If that succeeds, click `Start Sync`.
+3. Run `RKsync: Install Roblox Studio Plugin` from VS Code if you have not installed the Studio plugin yet.
+4. In Roblox Studio, open `File > Game Settings > Security`.
+5. Enable `Allow HTTP Requests`.
+6. Open the `RKsync` plugin panel.
+7. Leave the default URL as `http://127.0.0.1:34872` unless you changed the port.
+8. Click `Test Connection`.
+9. If that succeeds, click `Start Sync`.
 
 RKsync expects Roblox Studio and VS Code to be running on the same machine. Keep the URL on `localhost` or `127.0.0.1`.
 
@@ -175,6 +188,10 @@ Enable `Allow HTTP Requests` in `File > Game Settings > Security`, then retry fr
 ### Wrong port
 
 If you change the port in `.rksync.json` or VS Code settings, update the Studio plugin URL to match and reload VS Code so the extension restarts on that port.
+
+### Plugin and extension mismatch
+
+If RKsync reports a protocol mismatch, reinstall both the VS Code extension and the Roblox Studio plugin from the same build. The VS Code command `RKsync: Install Roblox Studio Plugin` is the fastest way to refresh the Studio side.
 
 ### Malformed `.rksync.json`
 

@@ -1,5 +1,6 @@
 'use strict';
 
+const packageJson = require('./package.json');
 const vscode = require('vscode');
 const fs = require('fs/promises');
 const fssync = require('fs');
@@ -7,6 +8,17 @@ const http = require('http');
 const path = require('path');
 const crypto = require('crypto');
 const { IgnoreMatcher } = require('./lib/ignoreMatcher');
+const {
+  getRobloxPluginInstallInfo,
+  installRobloxPluginFiles
+} = require('./lib/pluginInstall');
+const {
+  PROTOCOL_VERSION,
+  PROTOCOL_VERSION_HEADER,
+  describeProtocolMismatch,
+  getProtocolVersionFromHeaders,
+  isProtocolVersionCompatible
+} = require('./lib/protocol');
 const {
   DEFAULT_PORT,
   DEFAULT_SYNC_ROOT,
@@ -35,6 +47,7 @@ const SIDEBAR_REFRESH_MS = 1000;
 const TOMBSTONE_REUSE_WINDOW_MS = 15000;
 const RECONCILE_STALE_MS = 2500;
 const RECENT_ACTIVITY_LIMIT = 40;
+const EXTENSION_VERSION = packageJson.version;
 
 function now() {
   return Date.now();
@@ -353,6 +366,20 @@ class RKsyncStatusProvider extends RKsyncTreeProvider {
 
     items.push(
       createTreeNode({
+        label: info.pluginInstalled ? 'Reinstall Roblox Plugin' : 'Install Roblox Plugin',
+        description: info.pluginInstalled ? 'Installed for Studio' : 'One-click setup',
+        iconId: info.pluginInstalled ? 'check' : 'cloud-download',
+        colorId: info.pluginInstalled ? 'testing.iconPassed' : 'testing.iconQueued',
+        command: {
+          command: 'rksync.installPlugin',
+          title: 'Install Roblox Plugin'
+        },
+        tooltip: info.pluginInstallTooltip
+      })
+    );
+
+    items.push(
+      createTreeNode({
         label: 'Configuration',
         description: info.configSource,
         iconId: 'settings-gear',
@@ -633,6 +660,7 @@ class RKsyncController {
     this.ignoreMatcher = null;
     this.reconcilePromise = null;
     this.refreshTimer = null;
+    this.pluginInstallPromptShown = false;
   }
 
   log(message) {
@@ -798,6 +826,7 @@ class RKsyncController {
   }
 
   buildInfo() {
+    const pluginInstallInfo = this.getPluginInstallInfo();
     const hasWorkspace = Boolean(this.workspaceFolder);
     const connected = this.isStudioConnected();
     const workspaceMode = hasWorkspace
@@ -852,6 +881,16 @@ class RKsyncController {
       workspaceMode,
       syncRoot: this.syncRootName,
       syncRootPath: this.syncRootPath,
+      pluginInstalled: pluginInstallInfo.installed,
+      pluginInstallTooltip: pluginInstallInfo.error
+        ? pluginInstallInfo.error
+        : [
+            `Destination: ${pluginInstallInfo.destination}`,
+            pluginInstallInfo.installed
+              ? 'Roblox Studio plugin is installed.'
+              : 'Roblox Studio plugin is not installed yet.',
+            pluginInstallInfo.legacyInstalled ? 'Legacy MorgSync plugin is still present.' : 'Legacy MorgSync plugin not found.'
+          ].join('\n'),
       configSource: this.configurationSourceLabel,
       configWarning: this.configurationWarningMessage,
       configTooltip: [
@@ -928,6 +967,7 @@ class RKsyncController {
       this.activityTreeView,
       this.filesTreeView,
       vscode.commands.registerCommand('rksync.showStatus', () => this.showStatus()),
+      vscode.commands.registerCommand('rksync.installPlugin', () => this.installPlugin()),
       vscode.commands.registerCommand('rksync.openSyncFolder', () => this.openSyncFolder()),
       vscode.commands.registerCommand('rksync.rebuildState', () => this.rebuildState()),
       vscode.commands.registerCommand('rksync.showOutput', () => this.output.show(true))
@@ -1000,6 +1040,58 @@ class RKsyncController {
       return;
     }
     this.refreshVisualState(true);
+    void this.maybePromptPluginInstall();
+  }
+
+  getPluginInstallInfo() {
+    try {
+      return getRobloxPluginInstallInfo(this.context.extensionPath);
+    } catch (error) {
+      return {
+        destination: '',
+        error: error.message,
+        installed: false,
+        legacyInstalled: false
+      };
+    }
+  }
+
+  async installPlugin() {
+    try {
+      const installInfo = await installRobloxPluginFiles(this.context.extensionPath);
+      this.log(`Installed Roblox Studio plugin to ${installInfo.destination}`);
+      this.refreshVisualState(true);
+      const choice = await vscode.window.showInformationMessage(
+        'RKsync installed the Roblox Studio plugin successfully.',
+        'Reveal Plugin File'
+      );
+      if (choice === 'Reveal Plugin File') {
+        await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(installInfo.destination));
+      }
+    } catch (error) {
+      this.log(`Failed to install Roblox Studio plugin: ${error.stack || error.message}`);
+      vscode.window.showErrorMessage(`RKsync could not install the Roblox Studio plugin: ${error.message}`);
+    }
+  }
+
+  async maybePromptPluginInstall() {
+    if (this.pluginInstallPromptShown) {
+      return;
+    }
+
+    const installInfo = this.getPluginInstallInfo();
+    if (installInfo.installed) {
+      return;
+    }
+
+    this.pluginInstallPromptShown = true;
+    const choice = await vscode.window.showInformationMessage(
+      'RKsync can install the Roblox Studio plugin for you.',
+      'Install Plugin'
+    );
+    if (choice === 'Install Plugin') {
+      await this.installPlugin();
+    }
   }
 
   async deactivate() {
@@ -1742,29 +1834,50 @@ class RKsyncController {
     if (!Array.isArray(ops)) {
       throw new Error('Expected ops array');
     }
-    for (const op of ops) {
-      if (!op || typeof op !== 'object') {
-        continue;
+    let changed = false;
+    let appliedOps = 0;
+    let caughtError = null;
+
+    try {
+      for (const op of ops) {
+        if (!op || typeof op !== 'object') {
+          continue;
+        }
+        if (op.type === 'upsert') {
+          const applied = await this.applyStudioUpsert(op, { save: false });
+          changed = applied || changed;
+          appliedOps += applied ? 1 : 0;
+          continue;
+        }
+        if (op.type === 'delete') {
+          const applied = await this.applyStudioDelete(op, { save: false });
+          changed = applied || changed;
+          appliedOps += applied ? 1 : 0;
+        }
       }
-      if (op.type === 'upsert') {
-        await this.applyStudioUpsert(op);
-        continue;
-      }
-      if (op.type === 'delete') {
-        await this.applyStudioDelete(op);
-      }
+    } catch (error) {
+      caughtError = error;
     }
-    if (ops.length > 0) {
+
+    if (changed) {
+      await this.saveState();
+    }
+
+    if (caughtError) {
+      throw caughtError;
+    }
+
+    if (appliedOps > 0) {
       this.recordActivity({
         source: 'system',
         action: 'push',
-        detail: `Studio pushed ${ops.length} change(s)`
+        detail: `Studio pushed ${appliedOps} applied change(s)`
       });
     }
     this.refreshVisualState(true);
   }
 
-  async applyStudioUpsert(op) {
+  async applyStudioUpsert(op, { save = true } = {}) {
     if (!op.id || !op.relativePath || typeof op.content !== 'string') {
       throw new Error('Invalid upsert op');
     }
@@ -1774,7 +1887,7 @@ class RKsyncController {
     const normalized = canonicalizeRelativePath(op.relativePath, className);
     if (this.ignoreMatcher?.isIgnored(normalized)) {
       this.log(`Ignored Studio upsert due to .rksyncignore: ${normalized}`);
-      return;
+      return false;
     }
 
     const absPath = this.resolveSyncPath(normalized);
@@ -1801,7 +1914,7 @@ class RKsyncController {
           `RKsync conflict on ${normalized}. Studio changes were saved under .rksync/conflicts.`
         );
         this.log(`Conflict detected for ${normalized}; Studio version saved to ${conflictAbsPath}.`);
-        return;
+        return false;
       }
     }
 
@@ -1823,7 +1936,9 @@ class RKsyncController {
     const entry = this.makeStateEntry(op.id, normalized, className, op.content);
     entry.instancePath = op.instancePath || relativePathToInstancePath(normalized);
     this.setScriptEntry(entry);
-    await this.saveState();
+    if (save) {
+      await this.saveState();
+    }
     this.markFileStatus(normalized, {
       source: 'studio',
       action: 'upsert',
@@ -1837,9 +1952,10 @@ class RKsyncController {
       detail: 'Applied Studio change to disk'
     });
     this.log(`Applied Studio upsert: ${normalized}`);
+    return true;
   }
 
-  async applyStudioDelete(op) {
+  async applyStudioDelete(op, { save = true } = {}) {
     if (!op.id && !op.relativePath) {
       throw new Error('Invalid delete op');
     }
@@ -1864,7 +1980,7 @@ class RKsyncController {
     }
 
     if (!entry) {
-      return;
+      return false;
     }
 
     const absPath = this.resolveSyncPath(entry.relativePath);
@@ -1872,7 +1988,9 @@ class RKsyncController {
     await fs.rm(absPath, { force: true });
     await this.removeEmptyAncestorDirs(absPath);
     this.rememberTombstone(entry);
-    await this.saveState();
+    if (save) {
+      await this.saveState();
+    }
     this.clearFileStatus(entry.relativePath);
     this.recordActivity({
       source: 'studio',
@@ -1881,6 +1999,18 @@ class RKsyncController {
       detail: 'Applied Studio delete to disk'
     });
     this.log(`Applied Studio delete: ${entry.relativePath}`);
+    return true;
+  }
+
+  assertProtocolCompatible(req) {
+    const protocolVersion = getProtocolVersionFromHeaders(req.headers);
+    if (isProtocolVersionCompatible(protocolVersion)) {
+      return;
+    }
+
+    const error = new Error(describeProtocolMismatch(protocolVersion));
+    error.statusCode = 409;
+    throw error;
   }
 
   async startServer(port) {
@@ -1891,9 +2021,11 @@ class RKsyncController {
         const message = error.stack || error.message;
         this.log(`Request failure: ${message}`);
         this.setLastError(error.message);
-        this.writeJson(res, 500, {
+        this.writeJson(res, error.statusCode ?? 500, {
           ok: false,
-          error: error.message
+          error: error.message,
+          extensionVersion: EXTENSION_VERSION,
+          protocolVersion: PROTOCOL_VERSION
         });
       }
     });
@@ -1915,6 +2047,7 @@ class RKsyncController {
   async routeRequest(req, res) {
     const requestUrl = new URL(req.url, 'http://127.0.0.1');
     const method = req.method?.toUpperCase();
+    this.assertProtocolCompatible(req);
 
     if (method === 'GET' && requestUrl.pathname === '/hello') {
       await this.ensureFreshLocalState({
@@ -1924,6 +2057,8 @@ class RKsyncController {
       this.markStudioSeen('hello');
       this.writeJson(res, 200, {
         ok: true,
+        extensionVersion: EXTENSION_VERSION,
+        protocolVersion: PROTOCOL_VERSION,
         workspaceName: this.workspaceFolder?.name ?? '',
         syncRoot: this.syncRootName,
         sequence: this.sequence,
@@ -1956,6 +2091,8 @@ class RKsyncController {
         this.writeJson(res, 200, {
           ok: true,
           reset: false,
+          extensionVersion: EXTENSION_VERSION,
+          protocolVersion: PROTOCOL_VERSION,
           sequence: this.sequence,
           counts: {
             scripts: Object.keys(this.state.scripts).length,
@@ -1979,6 +2116,8 @@ class RKsyncController {
         this.writeJson(res, 200, {
           ok: true,
           reset: true,
+          extensionVersion: EXTENSION_VERSION,
+          protocolVersion: PROTOCOL_VERSION,
           sequence: this.sequence,
           counts: {
             scripts: Object.keys(this.state.scripts).length,
@@ -1994,6 +2133,8 @@ class RKsyncController {
       this.writeJson(res, 200, {
         ok: true,
         reset: false,
+        extensionVersion: EXTENSION_VERSION,
+        protocolVersion: PROTOCOL_VERSION,
         sequence: this.sequence,
         counts: {
           scripts: Object.keys(this.state.scripts).length,
@@ -2010,6 +2151,8 @@ class RKsyncController {
       await this.applyStudioOps(body.ops);
       this.writeJson(res, 200, {
         ok: true,
+        extensionVersion: EXTENSION_VERSION,
+        protocolVersion: PROTOCOL_VERSION,
         sequence: this.sequence,
         counts: {
           scripts: Object.keys(this.state.scripts).length,
@@ -2045,6 +2188,7 @@ class RKsyncController {
   writeJson(res, statusCode, payload) {
     res.statusCode = statusCode;
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader(PROTOCOL_VERSION_HEADER, `${PROTOCOL_VERSION}`);
     res.end(JSON.stringify(payload));
   }
 }

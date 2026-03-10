@@ -4,11 +4,11 @@ local ScriptEditorService = game:GetService("ScriptEditorService")
 
 local PLUGIN_WIDGET_ID = "RKsyncWidget"
 local DEFAULT_SERVER_URL = "http://127.0.0.1:34872"
+local PROTOCOL_VERSION = 1
 local SYNC_ATTRIBUTE_NAME = "RKsyncId"
 local LEGACY_SYNC_ATTRIBUTE_NAME = "MorgSyncId"
 local PULL_INTERVAL_SECONDS = 0.5
 local FLUSH_INTERVAL_SECONDS = 0.2
-local SNAPSHOT_INTERVAL_SECONDS = 5
 local STATUS_COLORS = {
 	offline = Color3.fromRGB(190, 60, 60),
 	online = Color3.fromRGB(55, 145, 75),
@@ -649,6 +649,11 @@ local function explainRequestFailure(rawError)
 		return "RKsync server responded, but the plugin and extension do not match. Update both to the same build."
 	end
 
+	if string.find(lowerMessage, "protocol mismatch", 1, true)
+		or string.find(lowerMessage, "protocol version", 1, true) then
+		return "RKsync plugin and extension are out of sync. Reinstall both so they use the same build."
+	end
+
 	return message
 end
 
@@ -693,7 +698,9 @@ local function suppressId(id, seconds)
 end
 
 local function request(method, route, payload)
-	local headers = {}
+	local headers = {
+		["X-RKsync-Protocol-Version"] = tostring(PROTOCOL_VERSION),
+	}
 	local body = nil
 	if payload ~= nil then
 		body = HttpService:JSONEncode(payload)
@@ -730,6 +737,15 @@ local function performHello(failurePrefix)
 	if not success or not resultOrError or not resultOrError.ok then
 		clearServerDetails()
 		return false, string.format("%s%s", failurePrefix or "", explainRequestFailure(resultOrError))
+	end
+
+	if tonumber(resultOrError.protocolVersion) ~= PROTOCOL_VERSION then
+		clearServerDetails()
+		return false, string.format(
+			"%sRKsync protocol mismatch. Reinstall the VS Code extension and Roblox Studio plugin so both use protocol v%d.",
+			failurePrefix or "",
+			PROTOCOL_VERSION
+		)
 	end
 
 	state.workspaceName = resultOrError.workspaceName or ""
@@ -1126,19 +1142,6 @@ local function flushLoop(token)
 	end)
 end
 
-local function snapshotLoop(token)
-	task.spawn(function()
-		while state.enabled and state.stopToken == token do
-			task.wait(SNAPSHOT_INTERVAL_SECONDS)
-			if state.enabled and state.stopToken == token then
-				if ensureSyncCanUseNetwork() then
-					pushFullSnapshot()
-				end
-			end
-		end
-	end)
-end
-
 local function pullFullSnapshot()
 	local success = pullFromServer(0, "Connected to " .. state.serverUrl)
 	if not success then
@@ -1176,7 +1179,6 @@ local function startSync()
 		logStatus("paused", "Play test running. RKsync will reconnect when the play session stops.")
 		pullLoop(state.stopToken)
 		flushLoop(state.stopToken)
-		snapshotLoop(state.stopToken)
 		return
 	end
 
@@ -1204,7 +1206,6 @@ local function startSync()
 	logStatus("online", string.format("Connected to %s (%d file(s) mirrored)", state.serverUrl, state.serverScriptCount))
 	pullLoop(state.stopToken)
 	flushLoop(state.stopToken)
-	snapshotLoop(state.stopToken)
 end
 
 local function stopSync()

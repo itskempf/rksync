@@ -31,6 +31,7 @@
     "onView:rksync.status",
     "onView:rksync.files",
     "onView:rksync.activity",
+    "onCommand:rksync.installPlugin",
     "onCommand:rksync.showStatus",
     "onCommand:rksync.openSyncFolder",
     "onCommand:rksync.rebuildState",
@@ -63,6 +64,10 @@
       ]
     },
     "commands": [
+      {
+        "command": "rksync.installPlugin",
+        "title": "RKsync: Install Roblox Studio Plugin"
+      },
       {
         "command": "rksync.showStatus",
         "title": "RKsync: Show Status"
