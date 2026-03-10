@@ -2,7 +2,7 @@
   "name": "rksync",
   "displayName": "RKsync",
   "description": "Local-first live sync between VS Code and Roblox Studio scripts.",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "publisher": "itskempf",
   "license": "MIT",
   "repository": {
@@ -32,6 +32,7 @@
     "onView:rksync.files",
     "onView:rksync.activity",
     "onCommand:rksync.installPlugin",
+    "onCommand:rksync.reloadConfiguration",
     "onCommand:rksync.showStatus",
     "onCommand:rksync.openSyncFolder",
     "onCommand:rksync.rebuildState",
@@ -67,6 +68,10 @@
       {
         "command": "rksync.installPlugin",
         "title": "RKsync: Install Roblox Studio Plugin"
+      },
+      {
+        "command": "rksync.reloadConfiguration",
+        "title": "RKsync: Reload Configuration"
       },
       {
         "command": "rksync.showStatus",

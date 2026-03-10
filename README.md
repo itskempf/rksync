@@ -51,6 +51,14 @@ RKsync: Install Roblox Studio Plugin
 
 You can run it from the Command Palette or from the RKsync status view for a one-click install.
 
+Useful companion command:
+
+```text
+RKsync: Reload Configuration
+```
+
+That restarts the RKsync runtime without reloading the entire VS Code window.
+
 ### Roblox Studio plugin
 
 The easiest path is the built-in VS Code command:
@@ -130,6 +138,8 @@ VS Code settings are still supported:
 
 Reload the VS Code window after changing `.rksync.json` or the VS Code settings so the localhost server restarts with the new values.
 
+RKsync also watches `.rksync.json`, workspace-folder changes, and supported VS Code settings, so most configuration changes reload automatically. If you want to force it manually, run `RKsync: Reload Configuration`.
+
 ## Synced File Mapping
 
 Default sync root:
@@ -187,7 +197,7 @@ Enable `Allow HTTP Requests` in `File > Game Settings > Security`, then retry fr
 
 ### Wrong port
 
-If you change the port in `.rksync.json` or VS Code settings, update the Studio plugin URL to match and reload VS Code so the extension restarts on that port.
+If you change the port in `.rksync.json` or VS Code settings, update the Studio plugin URL to match. RKsync reloads automatically when the config changes, and you can also run `RKsync: Reload Configuration` manually.
 
 ### Plugin and extension mismatch
 

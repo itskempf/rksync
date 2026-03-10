@@ -997,12 +997,17 @@ local function applyUpsert(op)
 	trackScript(script)
 
 	suppressId(op.id, 2)
-	ScriptEditorService:UpdateSourceAsync(script, function(oldContent)
-		if oldContent == op.content then
-			return nil
-		end
-		return op.content
+	local success = pcall(function()
+		ScriptEditorService:UpdateSourceAsync(script, function(oldContent)
+			if oldContent == op.content then
+				return nil
+			end
+			return op.content
+		end)
 	end)
+	if not success then
+		script.Source = op.content
+	end
 	state.lastObserved[op.id] = {
 		type = "upsert",
 		relativePath = op.relativePath,

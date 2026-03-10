@@ -47,6 +47,7 @@ const SIDEBAR_REFRESH_MS = 1000;
 const TOMBSTONE_REUSE_WINDOW_MS = 15000;
 const RECONCILE_STALE_MS = 2500;
 const RECENT_ACTIVITY_LIMIT = 40;
+const RUNTIME_RELOAD_DEBOUNCE_MS = 300;
 const EXTENSION_VERSION = packageJson.version;
 
 function now() {
@@ -457,6 +458,19 @@ class RKsyncStatusProvider extends RKsyncTreeProvider {
 
     items.push(
       createTreeNode({
+        label: 'Reload RKsync',
+        description: 'Apply workspace or settings changes',
+        iconId: 'debug-restart',
+        command: {
+          command: 'rksync.reloadConfiguration',
+          title: 'Reload RKsync'
+        },
+        tooltip: 'Restart the RKsync runtime and reload configuration.'
+      })
+    );
+
+    items.push(
+      createTreeNode({
         label: 'Open Output',
         description: 'Inspect sync logs',
         iconId: 'output',
@@ -661,6 +675,9 @@ class RKsyncController {
     this.reconcilePromise = null;
     this.refreshTimer = null;
     this.pluginInstallPromptShown = false;
+    this.runtimeReloadTimer = null;
+    this.runtimeReloadPromise = null;
+    this.pendingReloadRequest = null;
   }
 
   log(message) {
@@ -968,9 +985,24 @@ class RKsyncController {
       this.filesTreeView,
       vscode.commands.registerCommand('rksync.showStatus', () => this.showStatus()),
       vscode.commands.registerCommand('rksync.installPlugin', () => this.installPlugin()),
+      vscode.commands.registerCommand('rksync.reloadConfiguration', () =>
+        this.reloadRuntime('manual reload', { notifyUser: true })
+      ),
       vscode.commands.registerCommand('rksync.openSyncFolder', () => this.openSyncFolder()),
       vscode.commands.registerCommand('rksync.rebuildState', () => this.rebuildState()),
-      vscode.commands.registerCommand('rksync.showOutput', () => this.output.show(true))
+      vscode.commands.registerCommand('rksync.showOutput', () => this.output.show(true)),
+      vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        this.scheduleRuntimeReload('workspace folders changed');
+      }),
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        const target = this.workspaceFolder?.uri;
+        if (
+          event.affectsConfiguration('rksync', target) ||
+          event.affectsConfiguration('morgSync', target)
+        ) {
+          this.scheduleRuntimeReload('VS Code settings changed');
+        }
+      })
     );
 
     this.refreshTimer = setInterval(() => this.refreshVisualState(false), SIDEBAR_REFRESH_MS);
@@ -983,64 +1015,189 @@ class RKsyncController {
       }
     });
 
+    await this.reloadRuntime('extension startup');
+    void this.maybePromptPluginInstall();
+  }
+
+  selectWorkspaceFolder() {
     const folders = vscode.workspace.workspaceFolders ?? [];
     if (folders.length === 0) {
+      this.workspaceFolder = null;
+      this.workspacePath = null;
+      this.workspaceConfigPath = null;
       this.workspaceModeMessage = 'Open a folder to start RKsync.';
-      this.log('RKsync activated without an open workspace folder. Open a folder and the localhost server will start.');
-      this.refreshVisualState(true);
-      return;
+      return false;
     }
 
     this.workspaceFolder = folders[0];
     this.workspacePath = this.workspaceFolder.uri.fsPath;
+    this.workspaceConfigPath = path.join(this.workspacePath, WORKSPACE_CONFIG_FILE_NAME);
     if (folders.length > 1) {
       this.workspaceModeMessage = `Multiple workspace folders are open. RKsync is using only the first folder: ${this.workspaceFolder.name}`;
       this.log(this.workspaceModeMessage);
     } else {
       this.workspaceModeMessage = 'Single workspace folder';
     }
+    return true;
+  }
 
-    this.workspaceConfigPath = path.join(this.workspacePath, WORKSPACE_CONFIG_FILE_NAME);
+  resetRuntimeState() {
+    this.server = null;
+    this.serverPort = null;
+    this.serverRunning = false;
+    this.watchers = [];
+    this.syncRootName = DEFAULT_SYNC_ROOT;
+    this.syncRootPath = null;
+    this.stateDirPath = null;
+    this.stateFilePath = null;
+    this.legacyStateDirPath = null;
+    this.legacyStateFilePath = null;
+    this.state = createInitialState(DEFAULT_SYNC_ROOT);
+    this.pathToId.clear();
+    this.mutedWrites.clear();
+    this.pendingJournal = [];
+    this.sequence = 0;
+    this.lastStudioSeenAt = 0;
+    this.lastStudioAction = '';
+    this.lastReconcileAt = 0;
+    this.configurationSourceLabel = 'Defaults';
+    this.configurationWarningMessage = '';
+    this.fileStatuses.clear();
+    this.ignoreMatcher = null;
+  }
 
-    let port = DEFAULT_PORT;
-    try {
-      const configuration = await this.getConfiguration();
-      port = configuration.port;
-      this.syncRootName = configuration.syncRoot;
-      this.syncRootPath = path.join(this.workspacePath, this.syncRootName);
-      this.stateDirPath = path.join(this.workspacePath, STATE_DIR_NAME);
-      this.stateFilePath = path.join(this.stateDirPath, STATE_FILE_NAME);
-      this.legacyStateDirPath = path.join(this.workspacePath, LEGACY_STATE_DIR_NAME);
-      this.legacyStateFilePath = path.join(this.legacyStateDirPath, STATE_FILE_NAME);
+  disposeWatchers() {
+    for (const watcher of this.watchers) {
+      watcher.dispose();
+    }
+    this.watchers = [];
+  }
 
-      await this.migrateLegacyStateIfNeeded();
-      await fs.mkdir(this.syncRootPath, { recursive: true });
-      await fs.mkdir(this.stateDirPath, { recursive: true });
-      await this.loadState();
-      this.ignoreMatcher = new IgnoreMatcher(this.syncRootPath);
-      await this.canonicalizeTrackedPaths();
-      await this.reconcileLocalDisk({ emitOps: true, reason: 'extension startup' });
-      this.startWatchers();
-    } catch (error) {
-      this.setLastError(error.message);
-      this.log(`Failed to initialize RKsync for workspace ${this.workspaceFolder.name}: ${error.stack || error.message}`);
-      vscode.window.showErrorMessage(`RKsync could not prepare the workspace: ${error.message}`);
-      return;
+  clearPendingFileEvents() {
+    for (const pending of this.pendingFileEvents.values()) {
+      clearTimeout(pending.timer);
+    }
+    this.pendingFileEvents.clear();
+  }
+
+  async stopRuntime() {
+    this.disposeWatchers();
+    this.clearPendingFileEvents();
+
+    if (this.server) {
+      await new Promise((resolve) => this.server.close(resolve));
+      this.server = null;
     }
 
-    try {
-      await this.startServer(port);
-    } catch (error) {
-      const message = describeServerStartError(error, port);
-      this.serverRunning = false;
-      this.serverPort = port;
-      this.setLastError(message);
-      this.log(`Failed to start HTTP server on 127.0.0.1:${port}: ${error.stack || error.message}`);
-      vscode.window.showErrorMessage(message);
-      return;
-    }
+    this.resetRuntimeState();
     this.refreshVisualState(true);
-    void this.maybePromptPluginInstall();
+  }
+
+  async prepareWorkspaceRuntime(reason) {
+    const configuration = await this.getConfiguration();
+    const port = configuration.port;
+    this.syncRootName = configuration.syncRoot;
+    this.syncRootPath = path.join(this.workspacePath, this.syncRootName);
+    this.stateDirPath = path.join(this.workspacePath, STATE_DIR_NAME);
+    this.stateFilePath = path.join(this.stateDirPath, STATE_FILE_NAME);
+    this.legacyStateDirPath = path.join(this.workspacePath, LEGACY_STATE_DIR_NAME);
+    this.legacyStateFilePath = path.join(this.legacyStateDirPath, STATE_FILE_NAME);
+
+    await this.migrateLegacyStateIfNeeded();
+    await fs.mkdir(this.syncRootPath, { recursive: true });
+    await fs.mkdir(this.stateDirPath, { recursive: true });
+    await this.loadState();
+    this.ignoreMatcher = new IgnoreMatcher(this.syncRootPath);
+    await this.canonicalizeTrackedPaths();
+    await this.reconcileLocalDisk({ emitOps: true, reason });
+    this.startWatchers();
+    this.serverPort = port;
+    await this.startServer(port);
+  }
+
+  scheduleRuntimeReload(reason, { notifyUser = false } = {}) {
+    if (this.runtimeReloadTimer) {
+      clearTimeout(this.runtimeReloadTimer);
+    }
+
+    this.pendingReloadRequest = {
+      reason,
+      notifyUser: notifyUser || this.pendingReloadRequest?.notifyUser === true
+    };
+
+    this.runtimeReloadTimer = setTimeout(() => {
+      this.runtimeReloadTimer = null;
+      const pending = this.pendingReloadRequest;
+      this.pendingReloadRequest = null;
+      void this.reloadRuntime(pending?.reason || reason, {
+        notifyUser: pending?.notifyUser === true
+      }).catch((error) => {
+        this.log(`Runtime reload failed: ${error.stack || error.message}`);
+        this.setLastError(error.message);
+      });
+    }, RUNTIME_RELOAD_DEBOUNCE_MS);
+  }
+
+  async reloadRuntime(reason, { notifyUser = false } = {}) {
+    if (this.runtimeReloadPromise) {
+      this.pendingReloadRequest = {
+        reason,
+        notifyUser: notifyUser || this.pendingReloadRequest?.notifyUser === true
+      };
+      return this.runtimeReloadPromise;
+    }
+
+    this.runtimeReloadPromise = (async () => {
+      await this.stopRuntime();
+
+      if (!this.selectWorkspaceFolder()) {
+        this.log('RKsync is waiting for a workspace folder. Open a folder and the localhost server will start automatically.');
+        this.refreshVisualState(true);
+        return false;
+      }
+
+      try {
+        await this.prepareWorkspaceRuntime(reason);
+      } catch (error) {
+        const message =
+          error?.code === 'EADDRINUSE' || error?.code === 'EACCES'
+            ? describeServerStartError(error, this.serverPort ?? DEFAULT_PORT)
+            : error.message;
+        await this.stopRuntime();
+        this.setLastError(message);
+        this.log(`Failed to initialize RKsync for workspace ${this.workspaceFolder.name}: ${error.stack || error.message}`);
+        vscode.window.showErrorMessage(`RKsync could not prepare the workspace: ${message}`);
+        return false;
+      }
+
+      this.clearLastError();
+      if (reason !== 'extension startup') {
+        this.recordActivity({
+          source: 'system',
+          action: 'reload',
+          detail: reason
+        });
+        this.log(`Reloaded RKsync runtime (${reason}).`);
+      }
+      this.refreshVisualState(true);
+      if (notifyUser) {
+        vscode.window.showInformationMessage(`RKsync reloaded successfully (${reason}).`);
+      }
+      return true;
+    })();
+
+    try {
+      return await this.runtimeReloadPromise;
+    } finally {
+      this.runtimeReloadPromise = null;
+      if (this.pendingReloadRequest) {
+        const pending = this.pendingReloadRequest;
+        this.pendingReloadRequest = null;
+        this.scheduleRuntimeReload(pending.reason, {
+          notifyUser: pending.notifyUser
+        });
+      }
+    }
   }
 
   getPluginInstallInfo() {
@@ -1078,6 +1235,9 @@ class RKsyncController {
     if (this.pluginInstallPromptShown) {
       return;
     }
+    if (!this.workspaceFolder) {
+      return;
+    }
 
     const installInfo = this.getPluginInstallInfo();
     if (installInfo.installed) {
@@ -1095,29 +1255,17 @@ class RKsyncController {
   }
 
   async deactivate() {
-    for (const watcher of this.watchers) {
-      watcher.dispose();
+    if (this.runtimeReloadTimer) {
+      clearTimeout(this.runtimeReloadTimer);
+      this.runtimeReloadTimer = null;
     }
-    this.watchers = [];
-
-    for (const pending of this.pendingFileEvents.values()) {
-      clearTimeout(pending.timer);
-    }
-    this.pendingFileEvents.clear();
 
     if (this.refreshTimer) {
       clearInterval(this.refreshTimer);
       this.refreshTimer = null;
     }
 
-    if (this.server) {
-      await new Promise((resolve) => this.server.close(resolve));
-      this.server = null;
-    }
-
-    this.serverRunning = false;
-    this.serverPort = null;
-    this.refreshVisualState(true);
+    await this.stopRuntime();
   }
 
   async migrateLegacyStateIfNeeded() {
@@ -1341,6 +1489,18 @@ class RKsyncController {
       this.watchers.push(watcher);
       this.context.subscriptions.push(watcher);
     }
+
+    const configWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(this.workspaceFolder, WORKSPACE_CONFIG_FILE_NAME)
+    );
+    const handleConfigChange = () => {
+      this.scheduleRuntimeReload(`${WORKSPACE_CONFIG_FILE_NAME} changed`);
+    };
+    configWatcher.onDidCreate(handleConfigChange);
+    configWatcher.onDidChange(handleConfigChange);
+    configWatcher.onDidDelete(handleConfigChange);
+    this.watchers.push(configWatcher);
+    this.context.subscriptions.push(configWatcher);
   }
 
   onLocalFileEvent(absPath, kind) {
