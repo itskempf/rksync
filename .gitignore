@@ -4,3 +4,8 @@ node_modules/
 .rksync/
 _rksync-runtime-trash/
 roblox-sync/
+GAME BACK UP*/
+*.rbxl
+*.rbxlx
+*.rbxm
+*.rbxmx
